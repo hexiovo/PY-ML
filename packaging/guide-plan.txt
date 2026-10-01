@@ -1,0 +1,17 @@
+Overall guide and in-app help implementation (0.4.2)
+
+Approved scope: the user requested a complete Chinese guide and a visible UI button.
+1. Write docs/overall-guide.md as the single source for the offline guide.
+2. Include that file as a package resource in wheels and in frozen builds.
+3. Add a reusable, non-modal help dialog with a chapter list and text search.
+   Open it from the main header button, the Help menu, and F1.
+4. Test source and installed resource loading, chapter navigation, search,
+   repeat opening, and missing-resource errors without starting a worker.
+5. Update README, version.md, package metadata and the local lock version.
+6. Build with the retained Python 3.12.14 runtime; verify the actual frozen
+   help entry, package resources, complete ZIP hashes and relocated startup.
+7. Preserve previous releases and save the commands/results under delivery/exe-0.4.2.
+
+No new runtime dependencies or changes to ML training/search behavior.
+Use the existing unittest and frozen smoke checks instead of the skill's
+generic fast-gate.sh (this repository has no such script).

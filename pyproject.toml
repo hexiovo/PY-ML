@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyml-workbench"
+version = "0.4.2"
+description = "面向表格数据的 Python 机器学习包与中文桌面工作台，支持批量验证搜索"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy==2.5.3",
+  "scipy==1.18.1",
+  "pandas==3.0.6",
+  "scikit-learn==1.9.1",
+  "threadpoolctl==3.7.0",
+  "openpyxl==3.1.5",
+]
+
+[project.optional-dependencies]
+search = [
+  "optuna==5.0.0",
+  "pymoo==0.6.2",
+]
+desktop = [
+  "PySide6==6.11.2",
+  "matplotlib==3.11.2",
+  "xlrd==2.0.2",
+]
+sequence = [
+  "hmmlearn==0.3.3",
+]
+deep = [
+  "torch==2.14.1",
+  "skorch==1.4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyml_workbench"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"docs/overall-guide.md" = "pyml_workbench/resources/overall-guide.md"
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "src/pyml_workbench",
+  "pyproject.toml",
+  "uv.lock",
+  "README.md",
+  "version.md",
+  "run_pyml_workbench.bat",
+  "docs",
+  "examples",
+  "tests",
+  "packaging",
+]

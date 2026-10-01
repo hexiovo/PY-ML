@@ -1,0 +1,42 @@
+Windows executable distribution plan (2026-10-02)
+
+Background and context
+The accepted 0.4.0 workbench runs from Python. The user now requests an EXE.
+Keep existing releases and HexiPlan audit records unchanged. This is an ordinary
+follow-up task after the previous HexiPlan run completed.
+
+Acceptance criteria
+Provide a Windows x64 folder distribution with a GUI EXE, dedicated worker EXE,
+all existing desktop/search/sequence/deep dependencies, instructions and a ZIP.
+No target-machine Python installation is required. Verify the actual frozen GUI,
+JSON worker train/freeze/test/export/inference, plotting, XLSX, optional backend
+imports and representative HMM/deep/search executions from a separate directory
+with PYTHONPATH removed. Do not claim all 78 algorithms were fitted by this check.
+Keep meaningful routing regression tests. The build and scoped regressions pass.
+
+Implementation details
+Use PyInstaller onedir and a common dependency collection shared by two EXEs.
+Build with the isolated Python 3.12.14 runtime, not project Python 3.12.0.
+The old runtime's code.replace corruption was independently reproduced by
+executing the archived SciPy module in unfrozen Python, then comparing the
+original compile with a filename-only replacement. The same check passes on
+3.12.14. Remove temporary six-spec monkeypatches; keep core-before-Qt initialization.
+The GUI is windowed; a console-subsystem worker preserves JSON stdout/stderr when
+started through QProcess pipes. Add runtime.worker_command so both GUI launch
+sites choose the sibling worker when frozen, preserving Python invocation otherwise.
+Add maintained entry scripts, a spec, build requirements and build instructions.
+Bundle catalog JSON and upstream package metadata/data/plugins using standard
+PyInstaller hooks and narrow explicit imports for dynamic models/search backends.
+Set version 0.4.1 for the frozen routing change, update uv.lock and documentation.
+Build tools are development-only and do not enter application dependencies.
+Store build/test logs in a new ordinary delivery record, not an old completed run.
+Preserve dist 0.3.0/0.4.0; use dist/PYML-Workbench for the new distribution.
+
+Verification and cleanup
+Test unfrozen/frozen command routing and missing-worker handling. Test the actual
+frozen worker with synthetic CSV files in a temporary directory outside the source
+tree; record JSON events, return codes and diagnostics. Exercise actual GUI startup
+and frozen QProcess integration using a packaging smoke entry mode, if needed.
+Verify copied distribution from a Unicode path. Package the entire folder; compute
+external SHA256SUMS. Remove owned build intermediates and synthetic data after
+evidence is saved, retaining scripts needed to rebuild or reproduce checks.

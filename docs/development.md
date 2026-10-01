@@ -1,0 +1,52 @@
+# 开发指南
+
+## 环境
+
+项目要求 Python 3.12，base 与桌面依赖由 `uv.lock` 固定。请从仓库根目录同步依赖：
+
+```powershell
+uv sync --locked --no-editable --no-dev --extra desktop --extra search --extra sequence --extra deep
+```
+
+这里有意使用 `--no-editable`：本地包构建安装到 `.venv`，避免 Windows 中文路径和非 UTF-8 locale 下导入源码路径问题。修改 `src/pyml_workbench` 后重新运行同步；在已有环境中若需强制替换已安装本地发行包，可追加 `--reinstall-package pyml-workbench`。运行 GUI、示例与测试时用 `.venv\Scripts\python.exe -X utf8`。
+
+## 检查命令
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -X utf8 examples\synthetic_classification.py
+.\.venv\Scripts\python.exe -X utf8 examples\synthetic_dimensionality_reduction.py
+.\.venv\Scripts\python.exe -X utf8 examples\synthetic_batch.py
+.\.venv\Scripts\python.exe -X utf8 examples\synthetic_extended.py
+```
+
+测试使用 unittest。示例在系统临时目录内生成 CSV 和结果，不依赖项目维护用 fixtures，不会改写用户数据。不要把一次性验证脚本或产生的模型/CSV留在源码目录；完成后清理 RUN/tmp 中已登记的临时文件。
+
+## 包结构
+
+- `config.py` 定义数据、划分和单实验配置契约。
+- `data.py` 实现 CSV/Excel 读取、预览和显式特征/目标校验。
+- `model_catalog.json`、`catalog.py`、`sequence_models.py` 和 `parameters.py` 提供 71 个 scikit-learn 模型及 7 个 HMM/deep 扩展模型的目录、构造和参数 schema。
+- `sequence.py` 与 `owned_snapshot.py` 构建并验证分组序列计划、窗口映射和持久 receipt；`extended_experiment.py` 提供 HMM/deep 拟合、评分、refit、导出、加载和推理后端。
+- `preprocessing.py` 构建在训练分区拟合的特征预处理；`experiment.py` 将传统与扩展模型接入验证、配置冻结、一次性测试、导出和重载流程。
+- `search_space.py`、`objectives.py`、`search.py` 和 `selection.py` 提供类型化搜索空间、任务目标、五种搜索适配器与 winner 冻结/最终化。
+- `history.py`、`batch.py` 负责 SQLite 队列、预算记账、缓存与恢复；`batch_gui.py` 提供批量配置和比较窗口。
+- `gui.py` 提供 PySide6 单任务工作台及“批量搜索队列”入口，`_worker.py` 在独立 Python worker 进程中执行动作；`__main__.py` 是 `python -m pyml_workbench` 的入口。
+
+## 可选搜索后端
+
+NumPy、SciPy、pandas、scikit-learn、threadpoolctl 和 openpyxl 构成 base；openpyxl 用于 XLSX 读取和默认结果导出。桌面 UI、指标图和旧版 XLS 输入由 `desktop` extra 提供。TPE 与遗传搜索分别在执行前按需检查 Optuna 与 pymoo，并由 `search` extra 安装。Grid、随机与退火不需要 Optuna/pymoo。HMM 与深度模型分别由 `sequence` 与 `deep` extras 提供。桌面完整方法可用环境通过 `uv sync --locked --no-editable --no-dev --extra desktop --extra search --extra sequence --extra deep` 安装；缺少可选包时 GUI/API 应在拟合前显示包名和安装命令，不能把未安装的方法报告为可运行。
+
+新增模型时必须沿用获批任务目录，确认上游 estimator、输入条件、真实能力和参数 schema；不要把目录可见性当作功能实现。运行时能力以 estimator 实例检测为准。更新参数索引时从实际 `list_models()`、`model_capabilities()`、`parameter_schema()` 和 `model_catalog.json` 生成，不手工编造默认值。
+
+## 工作流边界
+
+Windows EXE 的入口、spec 与开发构建依赖位于 `packaging`。构建使用独立 Python 3.12.14；项目环境仍可按原 Python 3.12 方式运行。重建与 frozen 检查详见 [EXE 指南](exe-guide.md)。
+
+- 一次运行使用固定的 60/20/20 划分；预处理只在训练分区拟合。
+- 验证结果用于检查当前配置；测试数据只在 `freeze_experiment` 之后通过 `evaluate_test` 使用一次。
+- 批量搜索每个组合最多 50 次真实拟合、250 个 proposals 和 20 分钟活动时间；最多并行 2 个 worker，每个数值线程数为 1。搜索只读取训练/验证分区，winner 必须先显式冻结，再用训练+验证数据重拟合并测试一次。
+- 固定手动参数也可作为一次候选运行：空 `fields` 的搜索空间只接受 Grid；每个 fixed 和基础模型参数都经 estimator 参数/类型校验，随机/TPE/遗传/退火的空变量空间必须以清楚错误拒绝。
+- 保存模型必须包含预处理和 estimator，并保留能力信息。对于未提供新数据 `predict`/`transform` 的算法，报告不可用能力而不是替代拟合或声称支持。
+- 只新增由当前获批范围要求的依赖。HMM/deep 可选依赖不得进入 base；它们的 lazy import 应保证仅安装 base 时包根目录、传统模型和 API 可导入。
+- 改动文档或功能时更新根目录 `version.md` 中的交付状态和验证范围；独立 S02 验收完成前不得标记 PASS。

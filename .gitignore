@@ -1,0 +1,41 @@
+# Local environments and Python/tool caches
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Builds, delivered binaries, and local validation runs
+/build/
+/delivery/
+/RUN/
+/dist/*
+!/dist/SHA256SUMS.txt
+
+# Local datasets, experiment state, and logs
+/data/
+/datasets/
+/runs/
+/logs/
+*.log
+*.sqlite3
+*.sqlite3-*
+*.sqlite
+*.sqlite-*
+*.joblib
+*.pkl
+
+# Machine-specific settings and credentials
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
