@@ -9,5 +9,10 @@ class CrispSplash(Splash):
         script = super().generate_script()
         canvas_script = (Path(__file__).with_name('startup_canvas.tcl')).read_text(encoding='utf-8')
         script = script.replace('pack .root', canvas_script + '\npack .root', 1)
+        # PyInstaller's SplashWriter uses len(script) for a UTF-8 byte buffer.
+        # Chinese text makes it truncate the tail (including window placement).
+        # Carry the complete UTF-8 program in an ASCII-only Tcl expression so
+        # the archive's character and byte lengths agree; decode at runtime.
+        script = f'eval [encoding convertfrom utf-8 [binary decode hex {script.encode("utf-8").hex()}]]\n'
         Path(self.script_name).write_text(script, encoding='utf-8')
         return script

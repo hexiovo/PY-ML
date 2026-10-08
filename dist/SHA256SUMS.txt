@@ -25,6 +25,6 @@ fd38cdbb65d24c1c81c9d1baff14a4509a48cbcaa4349839150ec98d94da80be  PYML-Workbench
 08a7bf9e8300a8b815dc34452d890c42de00f856c98ae76bec1e7b9da09aba5d  startup-20261008/PYML-Workbench-standard/PYML-Workbench.exe
 cc1af7fa1fbae362cb153c2efed0febbe8d3bf67e7fdf577fd355febc63c36d5  startup-20261008/PYML-Workbench-standard/PYML-Worker.exe
 28c3a5789e2b45f8e47304f04c7e0074b0fb9746fdba8cc8533b59f2daec33ef  PYML-Workbench-0.4.4-windows-x64-standard-startup-20261008.zip
-fc4b865d9ff70e940ef44459edba9f07b02abe504dec9174ec0db07a4e4a33ad  ui-polish-20261008/PYML-Workbench-standard/PYML-Workbench.exe
+dfa93f9a9cec26387443d108cd7b60b983236a475a8294b185d4ccd976e82584  ui-polish-20261008/PYML-Workbench-standard/PYML-Workbench.exe
 45a7e88d532d7b5e95a9a3011b028f4388789ff58eba07f79d7fa20250cbfb81  ui-polish-20261008/PYML-Workbench-standard/PYML-Worker.exe
-8630bf1fca3c4e6cd50e3a9fb7f46a8a7ebb755672d8b42315149a053ce8373c  PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip
+07b77c2e55be58407d0860a557bb75ca1aa92b640e5ed36871036cf9553015f5  PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip
