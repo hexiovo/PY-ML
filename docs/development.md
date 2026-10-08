@@ -41,7 +41,43 @@ NumPy、SciPy、pandas、scikit-learn、threadpoolctl 和 openpyxl 构成 base�
 
 ## 工作流边界
 
+### PDF 图文指南维护
+
+`docs/overall-guide.md` 是正文来源；实际 UI 截图、合成练习 CSV 与来源/哈希位于 `docs/assets/pdf-guide`。截图采集使用 Qt 工作台与合成数据，执行 C01 单任务与三候选 Grid 搜索；设置 `PYTHONPATH=src` 时捕获当前源码 UI，否则捕获已安装包。运行前需要完整桌面环境，使用新的演示目录避免混入旧任务：
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path src).Path
+.\.venv\Scripts\python.exe -X utf8 -B packaging\capture_pdf_guide.py --work tmp\pdfs\new-demo
+Remove-Item Env:PYTHONPATH
+```
+
+只刷新当前向导页面时追加 `--wizard-only`：采集数据、预处理、算法/评价、资源、真实运行监控和结果导出页面；使用两个分类模型各完成一次 validation Grid 拟合，并把新截图合并到既有 `screenshots.json`，保留未受界面改动影响的截图。此模式要求已有截图清单和相同的确定性演示数据；每次传入新的 `--work` 目录，避免复用旧结果。
+
+PDF 构建使用独立文档 Python 环境中的 `reportlab`、`Pillow` 和 `pypdf`，以及 Windows 微软雅黑字体，不增加应用运行依赖：
+
+```powershell
+python -X utf8 -B packaging\build_pdf_guide.py
+pdftoppm -r 120 -png output\pdf\PYML-Workbench-0.4.2-图文指南.pdf tmp\pdfs\page
+```
+
+最终 PDF 与结构检查摘要保存在 `output/pdf`；构建后必须查看渲染页面，检查中文、英文代码和表格、图题图注、截图及页码，再清理 `tmp/pdfs`。更新图文指南时同步 README 与 `version.md`。发行脚本会把当前版本 PDF 复制到新 profile 目录的 `output/pdf`，使发行包 README 的相对链接可用；旧发行目录保持原样。
+
 Windows EXE 的入口、spec 与开发构建依赖位于 `packaging`。构建使用独立 Python 3.12.14；项目环境仍可按原 Python 3.12 方式运行。重建与 frozen 检查详见 [EXE 指南](exe-guide.md)。
+
+### Windows 发行 profile
+
+`packaging/profiles.json` 定义发行依赖、模型目录段和 PyInstaller 收集范围。`standard` 收集桌面界面与 71 个 scikit-learn 模型，排除 hmmlearn、torch/skorch、Optuna 和 pymoo；`full` 通过 `sequence`、`deep`、`search` extras 纳入这些扩展。标准版仍包含 Grid、随机与退火搜索逻辑。
+
+在隔离的 Python 3.12.14 环境中，按要构建的 profile 安装项目 extras 和打包工具：
+
+```powershell
+uv sync --locked --no-editable --no-dev --extra desktop
+python -m pip install -r packaging/build-requirements.txt
+python packaging/build_release.py --profile standard --dry-run
+python packaging/build_release.py --profile standard
+```
+
+构建完整扩展版时，在同步命令上再加 `--extra search --extra sequence --extra deep`，并将两个构建命令中的 `standard` 改为 `full`。构建器检查 Python 必须为 3.12.14；它把 profile 传给 spec，并输出到各自目录和带 profile 名称的 ZIP。若当前 profile 的目录、ZIP 或 PyInstaller 工作目录已存在，构建会在 PyInstaller 启动前退出并保留原文件。可给 `build_release.py` 传入绝对的 `--work-dir`，将临时构建中间文件放到发行输出以外。每次实际构建生成 `delivery/exe-<version>/<profile>-release-result.json`，记录目录和 ZIP 的实测字节数；没有构建记录时不要声称已实测缩小。
 
 - 一次运行使用固定的 60/20/20 划分；预处理只在训练分区拟合。
 - 验证结果用于检查当前配置；测试数据只在 `freeze_experiment` 之后通过 `evaluate_test` 使用一次。

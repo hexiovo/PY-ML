@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "G2 approved RUN/evidence/selected-model-catalog-v1.csv",
-  "active_count": 71,
+  "active_count": 77,
   "deferred_count": 7,
   "active_models": [
     {
@@ -997,6 +997,121 @@
       "key_limits": "Assumes approximately Gaussian/elliptical inlier distribution.",
       "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.covariance.EllipticEnvelope.html",
       "implementation_status": "available"
+    },
+    {
+      "id": "C25",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "xgboost.sklearn.XGBClassifier",
+      "class_name": "XGBClassifier",
+      "display_name_zh": "分类 · XGBoost",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict, predict_proba",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional dependency; target labels are encoded and restored by the fitted estimator adapter.",
+      "official_api_url": "https://xgboost.readthedocs.io/en/stable/python/python_api.html#xgboost.XGBClassifier",
+      "implementation_status": "available",
+      "optional_extra": "xgboost",
+      "optional_module": "xgboost",
+      "seed_parameter": "random_state",
+      "thread_parameter": "n_jobs",
+      "builder_defaults": {"verbosity": 0},
+      "target_adapter": "label_encoded"
+    },
+    {
+      "id": "C26",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "lightgbm.sklearn.LGBMClassifier",
+      "class_name": "LGBMClassifier",
+      "display_name_zh": "分类 · LightGBM",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict, predict_proba",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional dependency; missing or unloadable package leaves this model unavailable.",
+      "official_api_url": "https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMClassifier.html",
+      "implementation_status": "available",
+      "optional_extra": "lightgbm",
+      "optional_module": "lightgbm",
+      "seed_parameter": "random_state",
+      "thread_parameter": "n_jobs",
+      "builder_defaults": {"verbosity": -1}
+    },
+    {
+      "id": "C27",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "catboost.CatBoostClassifier",
+      "class_name": "CatBoostClassifier",
+      "display_name_zh": "分类 · CatBoost",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict, predict_proba",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional CPU dependency; quiet mode and file-free output are configured by default.",
+      "official_api_url": "https://catboost.ai/en/docs/concepts/python-reference_catboostclassifier",
+      "implementation_status": "available",
+      "optional_extra": "catboost",
+      "optional_module": "catboost",
+      "seed_parameter": "random_seed",
+      "thread_parameter": "thread_count",
+      "builder_defaults": {"verbose": false, "allow_writing_files": false, "task_type": "CPU"}
+    },
+    {
+      "id": "R24",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "xgboost.sklearn.XGBRegressor",
+      "class_name": "XGBRegressor",
+      "display_name_zh": "回归 · XGBoost",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional CPU-compatible dependency; uses the existing fitted preprocessing and seed/thread limits.",
+      "official_api_url": "https://xgboost.readthedocs.io/en/stable/python/python_api.html#xgboost.XGBRegressor",
+      "implementation_status": "available",
+      "optional_extra": "xgboost",
+      "optional_module": "xgboost",
+      "seed_parameter": "random_state",
+      "thread_parameter": "n_jobs",
+      "builder_defaults": {"verbosity": 0}
+    },
+    {
+      "id": "R25",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "lightgbm.sklearn.LGBMRegressor",
+      "class_name": "LGBMRegressor",
+      "display_name_zh": "回归 · LightGBM",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional dependency; missing or unloadable package leaves this model unavailable.",
+      "official_api_url": "https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMRegressor.html",
+      "implementation_status": "available",
+      "optional_extra": "lightgbm",
+      "optional_module": "lightgbm",
+      "seed_parameter": "random_state",
+      "thread_parameter": "n_jobs",
+      "builder_defaults": {"verbosity": -1}
+    },
+    {
+      "id": "R26",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "catboost.CatBoostRegressor",
+      "class_name": "CatBoostRegressor",
+      "display_name_zh": "回归 · CatBoost",
+      "algorithm_family": "gradient boosting",
+      "new_data_ops": "predict",
+      "sequence_hmm": "No sequence/HMM interface; tabular estimator",
+      "key_limits": "Optional CPU dependency; quiet mode and file-free output are configured by default.",
+      "official_api_url": "https://catboost.ai/en/docs/concepts/python-reference_catboostregressor",
+      "implementation_status": "available",
+      "optional_extra": "catboost",
+      "optional_module": "catboost",
+      "seed_parameter": "random_seed",
+      "thread_parameter": "thread_count",
+      "builder_defaults": {"verbose": false, "allow_writing_files": false, "task_type": "CPU"}
     }
   ],
   "deferred_models": [
@@ -1012,7 +1127,9 @@
       "sequence_hmm": "Native sequence model; lengths partitions concatenated observations into independent sequences",
       "key_limits": "Input emission type is model-specific; lengths must mark sequence boundaries. No transform API and no cross-boundary transitions when lengths is supplied.",
       "official_api_url": "https://hmmlearn.readthedocs.io/en/stable/api.html#hmmlearn.hmm.GaussianHMM",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "sequence",
+      "optional_module": "hmmlearn"
     },
     {
       "id": "H02",
@@ -1026,7 +1143,9 @@
       "sequence_hmm": "Native sequence model; lengths partitions concatenated observations into independent sequences",
       "key_limits": "Input emission type is model-specific; lengths must mark sequence boundaries. No transform API and no cross-boundary transitions when lengths is supplied.",
       "official_api_url": "https://hmmlearn.readthedocs.io/en/stable/api.html#hmmlearn.hmm.GMMHMM",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "sequence",
+      "optional_module": "hmmlearn"
     },
     {
       "id": "H03",
@@ -1040,7 +1159,9 @@
       "sequence_hmm": "Native sequence model; lengths partitions concatenated observations into independent sequences",
       "key_limits": "Input emission type is model-specific; lengths must mark sequence boundaries. No transform API and no cross-boundary transitions when lengths is supplied.",
       "official_api_url": "https://hmmlearn.readthedocs.io/en/stable/api.html#hmmlearn.hmm.CategoricalHMM",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "sequence",
+      "optional_module": "hmmlearn"
     },
     {
       "id": "N01",
@@ -1054,7 +1175,9 @@
       "sequence_hmm": "Tabular inputs; configure module/loss and preprocessing.",
       "key_limits": "Candidate composition; requires a caller-supplied PyTorch module and skorch wrapper; not built-in stock classifier/regressor architecture.",
       "official_api_url": "https://skorch.readthedocs.io/en/stable/classifier.html#skorch.classifier.NeuralNetClassifier; https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": ["torch", "skorch"]
     },
     {
       "id": "N02",
@@ -1068,7 +1191,9 @@
       "sequence_hmm": "Tabular inputs; configure module/loss and preprocessing.",
       "key_limits": "Candidate composition; requires a caller-supplied PyTorch module and skorch wrapper; not built-in stock classifier/regressor architecture.",
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": ["torch", "skorch"]
     },
     {
       "id": "N04",
@@ -1082,7 +1207,9 @@
       "sequence_hmm": "LSTM returns output and hidden/cell states; a thin module adapts per-sequence outputs. Preserve padding/masks and sequence boundaries.",
       "key_limits": "Candidate composition; requires a caller-supplied PyTorch module and skorch wrapper; not built-in stock classifier/regressor architecture.",
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": ["torch", "skorch"]
     },
     {
       "id": "N06",
@@ -1096,7 +1223,9 @@
       "sequence_hmm": "GRU returns output and hidden states; a thin module adapts per-sequence outputs. Preserve padding/masks and sequence boundaries.",
       "key_limits": "Candidate composition; requires a caller-supplied PyTorch module and skorch wrapper; not built-in stock classifier/regressor architecture.",
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.GRU.html",
-      "implementation_status": "available"
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": ["torch", "skorch"]
     }
   ]
 }

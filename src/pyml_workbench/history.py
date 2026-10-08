@@ -525,7 +525,8 @@ class HistoryStore:
                 )
                 connection.execute(
                     "UPDATE trials SET status='running', actual_fit_count=1, event_sequence=?, "
-                    "started_at=?, updated_at=? WHERE job_id=? AND trial_id=?",
+                    "started_at=?, finished_at=NULL, duration_seconds=0, updated_at=? "
+                    "WHERE job_id=? AND trial_id=?",
                     (sequence, now, now, job_id, trial_id),
                 )
         if exhausted:
@@ -577,6 +578,76 @@ class HistoryStore:
                     status, objective_value, metrics_json, result_json, error,
                     now, duration_seconds, sequence, cache_key, now, job_id, trial_id,
                 ),
+            )
+        return sequence
+
+    def requeue_interrupted_trial(self, *, job_id: str, trial_id: str, reason: str) -> int:
+        """Return the active fit slot so the same proposal can be retried whole.
+
+        The interrupted attempt remains auditable in ``events``. Its proposal
+        receipt is retained, while its unfinished fit receipt is cleared so a
+        later ``mark_fit_started`` can reuse the same global fit slot.
+        """
+        reason = _required_text(reason, "reason")
+        now = _now()
+        with self._transaction() as connection:
+            job = connection.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            trial = connection.execute(
+                "SELECT * FROM trials WHERE job_id=? AND trial_id=?", (job_id, trial_id)
+            ).fetchone()
+            if job is None or trial is None:
+                raise HistoryError("Cannot recover an unknown job/trial")
+            if trial["status"] != "running" or int(trial["actual_fit_count"]) != 1:
+                raise HistoryError(f"Trial {trial_id} is not an active fit receipt")
+            aggregate = int(job["actual_fit_count"])
+            persisted = int(connection.execute(
+                "SELECT COALESCE(SUM(actual_fit_count), 0) FROM trials WHERE job_id=?",
+                (job_id,),
+            ).fetchone()[0])
+            if aggregate != persisted or aggregate <= 0:
+                raise HistoryError(
+                    "Cannot recover interrupted trial because aggregate fit receipts are inconsistent"
+                )
+
+            raw = json.loads(trial["result_json"] or "{}")
+            raw.update(
+                status="proposed",
+                fit_index=None,
+                objective_value=None,
+                metrics={},
+                error=None,
+                error_id=None,
+                traceback=None,
+                duration_seconds=0.0,
+                session_path=None,
+                test_evaluation_count=0,
+            )
+            sequence = self._append_event(
+                connection,
+                job_id,
+                "trial_interrupted",
+                {
+                    "reason": reason,
+                    "fit_slot": aggregate,
+                    "config_sha256": trial["config_sha256"],
+                    "parameters": json.loads(trial["parameters_json"]),
+                    "started_at": trial["started_at"],
+                },
+                trial_id=trial_id,
+            )
+            connection.execute(
+                """
+                UPDATE trials SET status='proposed', objective_value=NULL, metrics_json=NULL,
+                    result_json=?, error_text=NULL, actual_fit_count=0, cache_hit=0,
+                    cached_from_trial_id=NULL, started_at=NULL, finished_at=NULL,
+                    duration_seconds=0, event_sequence=?, updated_at=?
+                WHERE job_id=? AND trial_id=?
+                """,
+                (_json_text(raw, field="interrupted trial recovery"), sequence, now, job_id, trial_id),
+            )
+            connection.execute(
+                "UPDATE jobs SET actual_fit_count=actual_fit_count-1, updated_at=? WHERE job_id=?",
+                (now, job_id),
             )
         return sequence
 
@@ -759,6 +830,7 @@ class HistoryStore:
                 if row is None:
                     raise HistoryError(f"Search result contains unrecorded proposal {trial_id}")
                 status_map = {
+                    "proposed": "proposed",
                     "complete": "succeeded", "failed": "failed", "invalid": "rejected",
                     "unscorable": "unscorable", "cached": "cached",
                 }
@@ -778,14 +850,15 @@ class HistoryStore:
                     UPDATE trials SET status=?, objective_value=?, metrics_json=?, result_json=?,
                         error_text=?, cache_key=COALESCE(?, cache_key), cache_hit=?,
                         cached_from_trial_id=?, event_sequence=?,
-                        finished_at=COALESCE(finished_at, ?),
-                        duration_seconds=COALESCE(duration_seconds, ?), updated_at=?
+                        finished_at=CASE WHEN ?='proposed' THEN NULL ELSE COALESCE(finished_at, ?) END,
+                        duration_seconds=CASE WHEN ?='proposed' THEN 0 ELSE COALESCE(duration_seconds, ?) END,
+                        updated_at=?
                     WHERE job_id=? AND trial_id=?
                     """,
                     (
                         status, objective_value, metrics_json, result_json, record.get("error"),
                         record.get("cache_key"), int(bool(record.get("cache_hit"))),
-                        record.get("cached_from"), sequence, now,
+                        record.get("cached_from"), sequence, status, now, status,
                         float(record.get("duration_seconds", 0.0)), now, job_id, trial_id,
                     ),
                 )

@@ -1,0 +1,333 @@
+{
+  "version": "0.4.4",
+  "source_kind": "Mixed Qt captures; earlier verified screenshots were retained and changed wizard screens refreshed. See each screenshot source_kind for provenance.",
+  "data_kind": "Deterministic synthetic data, no user data",
+  "sample_rows": 180,
+  "sample_sha256": "796af0ae4da5297c6773ba4884c841c47698bd40f88dd3d30259c3d868282c0b",
+  "single_actual_stages": [
+    "train",
+    "freeze",
+    "test",
+    "export"
+  ],
+  "single_test_evaluation_count": 1,
+  "batch_actual_search_fits": 3,
+  "batch_method": "grid",
+  "screenshots": [
+    {
+      "name": "offline-guide",
+      "file": "offline-guide.png",
+      "title": "应用内整体指南",
+      "chapter": 1,
+      "note": "左侧目录跳转章节，上方按关键词搜索；Enter 向前查找，F1 可再次打开指南。",
+      "orientation": "portrait",
+      "pixels": [
+        1200,
+        900
+      ],
+      "sha256": "d759fb47c0648edffaf7413f14a01d754d7d505d1916303e6d9ef2d01a6bebac",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "main-overview",
+      "file": "main-overview.png",
+      "title": "分步向导主窗口与真实结果",
+      "chapter": 3,
+      "note": "六步向导可逐步确认设置；验证比较完成后，结果页显示真实指标并可导出所选内容。",
+      "orientation": "landscape",
+      "pixels": [
+        2130,
+        1395
+      ],
+      "sha256": "f53acce3ac9273571598584224e6f7218534704b8245b5d2999adbe608cf39c7",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "data-selection",
+      "file": "data-selection.png",
+      "title": "数据预览与特征 / 目标选择",
+      "chapter": 4,
+      "note": "演示表格共 180 行。label 是目标，temperature 和 pressure 是特征。",
+      "orientation": "portrait",
+      "pixels": [
+        899,
+        870
+      ],
+      "sha256": "a3731f8d794d6ea5afcfcb075a4c4006f5bb088f8bcd699a3efa2322d85c0f46",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "data-overview",
+      "file": "data-overview.png",
+      "title": "完整数据概况",
+      "chapter": 4,
+      "note": "查看完整数据的行列数、列类型、缺失数和 describe 统计；预览行数不等于总样本数。",
+      "orientation": "portrait",
+      "pixels": [
+        1185,
+        870
+      ],
+      "sha256": "3f15f879970fb3868dad97e07c9d0a33f3f5c5dc71cbbcc4d72094f6bd066cfa",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "wizard-preprocessing-split",
+      "file": "wizard-preprocessing-split.png",
+      "title": "预处理与划分",
+      "chapter": 4,
+      "note": "检查训练 / 验证 / 测试划分和 seed；预处理只在训练分区拟合。",
+      "orientation": "portrait",
+      "pixels": [
+        941,
+        1395
+      ],
+      "sha256": "fc4098729eee25aa34a3cf148aeccb356da6861fabf54bbfe649535db7d7a8cd",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "model-parameters",
+      "file": "model-parameters.png",
+      "title": "单任务模型与常用参数",
+      "chapter": 5,
+      "note": "算法比较页同时保留单任务模型选择和常用参数；高级设置使用 JSON。",
+      "orientation": "portrait",
+      "pixels": [
+        878,
+        644
+      ],
+      "sha256": "e5c425664d06e5d67b6fdc24a79a65aa781a36bd823ca3c87bca52861a0c2f80",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "wizard-algorithm-metrics",
+      "file": "wizard-algorithm-metrics.png",
+      "title": "算法与评价",
+      "chapter": 5,
+      "note": "选择两个兼容分类模型，并勾选需要查看和导出的 validation 指标。",
+      "orientation": "portrait",
+      "pixels": [
+        941,
+        1395
+      ],
+      "sha256": "6d8cf16b7d02664cd50a9b0c6b0af31db5457ac172df9555a99bb7b99fbfac89",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "wizard-resources",
+      "file": "wizard-resources.png",
+      "title": "资源与输出",
+      "chapter": 5,
+      "note": "设置 CPU worker、每模型拟合 / 提案预算、活动时限和新结果目录。GPU 仅在可用时为 N01 提供。",
+      "orientation": "portrait",
+      "pixels": [
+        941,
+        1395
+      ],
+      "sha256": "29c9b4027f3b868878ad283191db11f5fe3f9343bc90b35ccb6ace2638edd8ea",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "validation-results",
+      "file": "validation-results.png",
+      "title": "训练与验证结果",
+      "chapter": 6,
+      "note": "这是实际合成数据计算结果。当前只展示 train / validation，测试集尚未评分。",
+      "orientation": "portrait",
+      "pixels": [
+        843,
+        521
+      ],
+      "sha256": "66d03f4a907e71b0d7c0e9d1dbfe97143ed6d852e182e0a10a2ebfb93f6f603f",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "final-exports",
+      "file": "final-exports.png",
+      "title": "最终测试后的导出与审计",
+      "chapter": 6,
+      "note": "单任务先冻结再测试同一个模型。结果目录含配置、指标、逐行结果和 model.joblib。",
+      "orientation": "portrait",
+      "pixels": [
+        843,
+        495
+      ],
+      "sha256": "def9049bda74a807f028895d3049d1f3a12c747505bb367ae74e710af0cf53ea",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "batch-configuration",
+      "file": "batch-configuration.png",
+      "title": "批量队列与网格搜索配置",
+      "chapter": 7,
+      "note": "本例搜索 C 的三个候选值；拟合上限 3 次、提案上限 15 次、时限 2 分钟、1 个 worker。实际完成 3 次拟合和 3 次提案。",
+      "orientation": "landscape",
+      "pixels": [
+        1650,
+        845
+      ],
+      "sha256": "d9f0fcf5e2f2f040612320ed38321033cb74a34dd3e29bf8f044d976c8b4c6c3",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "batch-results",
+      "file": "batch-results.png",
+      "title": "批量历史、验证 winner 与最终化入口",
+      "chapter": 7,
+      "note": "真实 Grid 任务已 completed。先选中任务并冻结验证 winner，再决定合并重拟合和最终测试。",
+      "orientation": "landscape",
+      "pixels": [
+        1650,
+        534
+      ],
+      "sha256": "50f53ff9d7409d87b99902e53d0810686c574036843ea82fa86f13351b79b6b1",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "wizard-monitor",
+      "file": "wizard-monitor.png",
+      "title": "真实验证运行监控与阶段进展",
+      "chapter": 7,
+      "note": "界面按真实完成的拟合数更新进度和验证指标；剩余时间在首个验证结果后估算。",
+      "orientation": "landscape",
+      "pixels": [
+        2130,
+        1395
+      ],
+      "sha256": "bf2c8352d9b48b6a82989de0d36b7b511959ca1766c94d5402545c2f35d2e289",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "wizard-results-export",
+      "file": "wizard-results-export.png",
+      "title": "验证结果与所选格式导出",
+      "chapter": 7,
+      "note": "两种模型的真实 validation 比较已完成；本例导出 CSV、XLSX、JSON、HTML、逐样本结果、模型和比较图。测试集未用于搜索。",
+      "orientation": "portrait",
+      "pixels": [
+        707,
+        243
+      ],
+      "sha256": "bf5c2f904e66e7bfeec7109b20fe15b212dc2b3e0f88d1e20546f5c21f889a52",
+      "source_kind": "Source checkout Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "sequence-configuration",
+      "file": "sequence-configuration.png",
+      "title": "HMM 的分组、时间和观测配置",
+      "chapter": 8,
+      "note": "这里只展示真实配置入口，未运行 HMM。组 / 时间是结构列，不会被当成观测特征。",
+      "orientation": "portrait",
+      "pixels": [
+        639,
+        836
+      ],
+      "sha256": "93b72a06f7cc6bf03669cd68dc9e3e33ed6f6f242452c3851bfc31f10830a9f0",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "basic-scatter",
+      "file": "basic-scatter.png",
+      "title": "完整数据的数值散点图",
+      "chapter": 9,
+      "note": "基础图表使用已加载表格，不启动模型；底部可保存当前 PNG 或 SVG。",
+      "orientation": "portrait",
+      "pixels": [
+        1200,
+        870
+      ],
+      "sha256": "338d714e49cc80c005325be690d91cadd92673e7a8be5412ec37b243cabae1d6",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "validation-confusion",
+      "file": "validation-confusion.png",
+      "title": "验证分区的分类结果图",
+      "chapter": 9,
+      "note": "混淆矩阵来自已核验 validation 缓存，不重新预测或测试。分区及有效样本数在底部。",
+      "orientation": "portrait",
+      "pixels": [
+        1200,
+        870
+      ],
+      "sha256": "0ba8c77392eb4ed8b6600c4dc872f7e57e31a1531af749505739d3f2435af941",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "inference-controls",
+      "file": "inference-controls.png",
+      "title": "已加载模型的推理入口",
+      "chapter": 10,
+      "note": "选择导出的可信 model.joblib，再选择新数据。只有模型实际支持的操作才会启用。",
+      "orientation": "portrait",
+      "pixels": [
+        843,
+        305
+      ],
+      "sha256": "950496c931a842b8d5d37bfd5294333c7874f89020454760fd57375484040ebc",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    },
+    {
+      "name": "file-and-diagnostics",
+      "file": "file-and-diagnostics.png",
+      "title": "文件菜单：配置、日志与诊断",
+      "chapter": 11,
+      "note": "参数配置 JSON、最近文件、日志目录和本机诊断 ZIP 都在文件菜单中。",
+      "orientation": "portrait",
+      "pixels": [
+        269,
+        261
+      ],
+      "sha256": "34e2f105aefeed1393a0686a9beb018ad784a238415c118fadd05bb171b9bb25",
+      "source_kind": "Installed Qt application, direct QWidget captures; offscreen platform"
+    }
+  ],
+  "batch_database_check": {
+    "job_id": "19d99dd5aefb442eaf079cfce51e014c",
+    "status": "completed",
+    "actual_fit_count": 3,
+    "proposal_count": 3
+  },
+  "wizard_validation": {
+    "models": [
+      "C01",
+      "C02"
+    ],
+    "method": "grid",
+    "actual_fit_count": 2,
+    "proposal_count": 2,
+    "outcomes": {
+      "C01": {
+        "sample_count": 36,
+        "accuracy": 0.9166666666666666,
+        "balanced_accuracy": 0.9166666666666667,
+        "precision_macro": 0.9285714285714286,
+        "recall_macro": 0.9166666666666667,
+        "f1_macro": 0.916083916083916
+      },
+      "C02": {
+        "sample_count": 36,
+        "accuracy": 0.8888888888888888,
+        "balanced_accuracy": 0.8888888888888888,
+        "precision_macro": 0.9090909090909092,
+        "recall_macro": 0.8888888888888888,
+        "f1_macro": 0.8875
+      }
+    },
+    "export_scope": "validation",
+    "export_files": [
+      "chart_accuracy",
+      "chart_balanced_accuracy",
+      "chart_f1_macro",
+      "chart_precision_macro",
+      "chart_recall_macro",
+      "comparison_csv",
+      "comparison_html",
+      "comparison_json",
+      "comparison_xlsx",
+      "model_C01_0f2e75e9",
+      "model_C02_119c415d",
+      "validation_predictions_csv"
+    ]
+  },
+  "revision_date": "2026-10-04"
+}

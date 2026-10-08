@@ -126,6 +126,72 @@ class PlotSequenceMap:
 
 
 @dataclass(frozen=True, slots=True)
+class PlotScoreCache:
+    """Real estimator scores aligned to explicit source row positions and classes."""
+
+    row_positions: tuple[int, ...]
+    score_type: str
+    semantics: str
+    class_order: tuple[object, ...]
+    score_column_map: tuple[tuple[int, object], ...]
+    values: tuple[tuple[float, ...], ...]
+
+    def __post_init__(self) -> None:
+        if self.score_type not in {"probability", "decision_score"}:
+            raise ValueError("score_type must identify probabilities or decision scores")
+        if self.semantics not in {
+            "one_column_per_class", "binary_positive_class_margin", "multiclass_one_vs_rest"
+        }:
+            raise ValueError("unsupported class score semantics")
+        positions = tuple(int(value) for value in self.row_positions)
+        if len(set(positions)) != len(positions) or any(value < 0 for value in positions):
+            raise ValueError("score row_positions must be unique non-negative positions")
+        classes = _freeze_tuple(self.class_order, allow_tuple=True)
+        mapping = tuple((int(index), _freeze_scalar(label, allow_tuple=True)) for index, label in self.score_column_map)
+        values = tuple(tuple(float(value) for value in row) for row in self.values)
+        if len(values) != len(positions) or not mapping or any(
+            len(row) != len(mapping) or not all(math.isfinite(value) for value in row)
+            for row in values
+        ):
+            raise ValueError("score values must be finite and align with row positions and score columns")
+        if any(index < 0 or index >= len(mapping) for index, _label in mapping):
+            raise ValueError("score column map indexes must refer to a score matrix column")
+        if any(
+            not any(_typed_key(label) == _typed_key(class_value) for class_value in classes)
+            for _index, label in mapping
+        ):
+            raise ValueError("score column map labels must belong to class_order")
+        object.__setattr__(self, "row_positions", positions)
+        object.__setattr__(self, "class_order", classes)
+        object.__setattr__(self, "score_column_map", mapping)
+        object.__setattr__(self, "values", values)
+
+
+@dataclass(frozen=True, slots=True)
+class PlotExplanationCache:
+    """Native model explanation values named by the fitted transformed features."""
+
+    kind: str
+    feature_names: tuple[str, ...]
+    class_labels: tuple[object, ...]
+    values: tuple[tuple[float, ...], ...]
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"feature_importance", "coefficient"}:
+            raise ValueError("unsupported native explanation kind")
+        names = tuple(str(value) for value in self.feature_names)
+        labels = _freeze_tuple(self.class_labels, allow_tuple=True)
+        values = tuple(tuple(float(value) for value in row) for row in self.values)
+        if not names or not values or len(values) != len(labels):
+            raise ValueError("explanation names and values must be non-empty and class-aligned")
+        if any(len(row) != len(names) or not all(math.isfinite(value) for value in row) for row in values):
+            raise ValueError("explanation values must be finite and align with transformed features")
+        object.__setattr__(self, "feature_names", names)
+        object.__setattr__(self, "class_labels", labels)
+        object.__setattr__(self, "values", values)
+
+
+@dataclass(frozen=True, slots=True)
 class PlotProvenance:
     """Optional SHA-256 values; callers compare only matching semantic domains."""
 
@@ -166,6 +232,10 @@ class PlotSource:
     sequence_map: tuple[PlotSequenceMap, ...] = ()
     provenance: PlotProvenance = field(default_factory=PlotProvenance)
     partition_count: int = 0
+    score_cache: PlotScoreCache | None = None
+    explanation_cache: PlotExplanationCache | None = None
+    score_unavailable_reason: str | None = None
+    explanation_unavailable_reason: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.schema_version, bool) or self.schema_version != 1:
@@ -229,6 +299,17 @@ class PlotSource:
             raise ValueError("sequence_map targets must be present in row_positions")
         if not isinstance(self.provenance, PlotProvenance):
             raise TypeError("provenance must be a PlotProvenance")
+        if self.score_cache is not None:
+            if not isinstance(self.score_cache, PlotScoreCache):
+                raise TypeError("score_cache must be a PlotScoreCache or None")
+            if self.score_cache.row_positions != positions:
+                raise ValueError("score cache row positions must exactly match the PlotSource")
+        if self.explanation_cache is not None and not isinstance(self.explanation_cache, PlotExplanationCache):
+            raise TypeError("explanation_cache must be a PlotExplanationCache or None")
+        for name in ("score_unavailable_reason", "explanation_unavailable_reason"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{name} must be a string or None")
         object.__setattr__(self, "columns", columns)
         object.__setattr__(self, "outputs", outputs)
         object.__setattr__(self, "sequence_map", sequence_map)
@@ -244,6 +325,10 @@ class PlotKind(str, Enum):
     REGRESSION_RESIDUAL = "regression_residual"
     CLUSTER_SCATTER = "cluster_scatter"
     HMM_STATE_POSTERIOR = "hmm_state_posterior"
+    ROC_CURVE = "roc_curve"
+    PRECISION_RECALL = "precision_recall"
+    NATIVE_EXPLANATION = "native_explanation"
+    BATCH_METRIC_COMPARISON = "batch_metric_comparison"
 
 
 _KIND_TITLES = {
@@ -256,6 +341,10 @@ _KIND_TITLES = {
     PlotKind.REGRESSION_RESIDUAL: "回归残差（真实值 − 预测值）",
     PlotKind.CLUSTER_SCATTER: "已有特征坐标上的聚类",
     PlotKind.HMM_STATE_POSTERIOR: "HMM 隐藏状态与后验概率",
+    PlotKind.ROC_CURVE: "ROC 曲线",
+    PlotKind.PRECISION_RECALL: "精确率-召回率曲线",
+    PlotKind.NATIVE_EXPLANATION: "模型原生特征重要性 / 系数",
+    PlotKind.BATCH_METRIC_COMPARISON: "同条件批量模型指标比较",
 }
 
 
@@ -268,6 +357,7 @@ class PlotSpec:
     bins: int = 20
     top_n: int = 20
     title: str | None = None
+    class_label: object | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -289,6 +379,8 @@ class PlotSpec:
             raise ValueError("category top_n must be between 1 and 500")
         if self.title is not None and not isinstance(self.title, str):
             raise TypeError("title must be a string or None")
+        if self.class_label is not None:
+            object.__setattr__(self, "class_label", _freeze_scalar(self.class_label, allow_tuple=True))
 
     @property
     def display_title(self) -> str:
@@ -297,6 +389,8 @@ class PlotSpec:
     @property
     def spec_id(self) -> str:
         suffix = ",".join(self.column_ids)
+        if self.class_label is not None:
+            suffix += f"|class={type(self.class_label).__name__}:{self.class_label!r}"
         return f"{self.kind.value}:{suffix}" if suffix else self.kind.value
 
 
@@ -424,6 +518,22 @@ def available_plot_specs(source: PlotSource) -> tuple[PlotSpec, ...]:
     output_ids = {column.column_id for column in source.outputs}
     if {"classification.y_true", "classification.y_pred"}.issubset(output_ids):
         specs.append(PlotSpec(PlotKind.CLASSIFICATION_CONFUSION, ("classification.y_true", "classification.y_pred")))
+    if source.score_cache is not None and "classification.y_true" in output_ids:
+        y_true = _find_column(source, "classification.y_true")
+        present_classes = {_typed_key(value) for value in y_true.values if not _is_missing(value)}
+        if len(present_classes) >= 2:
+            for _score_column, label in source.score_cache.score_column_map:
+                class_title = f"（类别 {label}）"
+                specs.append(PlotSpec(
+                    PlotKind.ROC_CURVE, ("classification.y_true",),
+                    title=f"ROC 曲线{class_title}", class_label=label,
+                ))
+                specs.append(PlotSpec(
+                    PlotKind.PRECISION_RECALL, ("classification.y_true",),
+                    title=f"精确率-召回率曲线{class_title}", class_label=label,
+                ))
+    if source.explanation_cache is not None:
+        specs.append(PlotSpec(PlotKind.NATIVE_EXPLANATION))
     if {"regression.y_true", "regression.y_pred"}.issubset(output_ids):
         specs.extend((
             PlotSpec(PlotKind.REGRESSION_ACTUAL_PREDICTED, ("regression.y_true", "regression.y_pred")),
@@ -466,8 +576,9 @@ def _numeric_suffix(column_id: str) -> int:
 def _validate_spec(source: PlotSource, spec: PlotSpec) -> None:
     if not isinstance(source, PlotSource) or not isinstance(spec, PlotSpec):
         raise TypeError("build_plot_payload requires a PlotSource and a PlotSpec")
-    if (spec.kind, spec.column_ids) not in {
-        (available.kind, available.column_ids) for available in available_plot_specs(source)
+    if (spec.kind, spec.column_ids, _typed_key(spec.class_label) if spec.class_label is not None else None) not in {
+        (available.kind, available.column_ids, _typed_key(available.class_label) if available.class_label is not None else None)
+        for available in available_plot_specs(source)
     }:
         raise ValueError(f"plot spec {spec.spec_id!r} is not available for this source")
 
@@ -658,6 +769,69 @@ def _classification_confusion(source: PlotSource, spec: PlotSpec) -> PlotPayload
     )
 
 
+def _classification_curve(source: PlotSource, spec: PlotSpec) -> PlotPayload:
+    from sklearn.metrics import precision_recall_curve, roc_curve
+
+    cache = source.score_cache
+    if cache is None:
+        raise ValueError(source.score_unavailable_reason or "没有真实分类分数缓存；请重新训练后绘 ROC/PR。")
+    actual_column = _find_column(source, "classification.y_true")
+    score_column = next(
+        (index for index, label in cache.score_column_map if _typed_key(label) == _typed_key(spec.class_label)),
+        None,
+    )
+    if score_column is None:
+        raise ValueError("所选类别没有对应的实际估计器分数列。")
+    positives: list[int] = []
+    scores: list[float] = []
+    for actual, row in zip(actual_column.values, cache.values):
+        if _is_missing(actual):
+            continue
+        positives.append(int(_typed_key(actual) == _typed_key(spec.class_label)))
+        scores.append(float(row[score_column]))
+    if len(set(positives)) != 2:
+        raise ValueError("ROC/PR 需要该评估分区同时包含所选类别和其他类别；请换分区或重新划分数据。")
+    if spec.kind == PlotKind.ROC_CURVE:
+        x_values, y_values, _thresholds = roc_curve(positives, scores)
+        x_label, y_label = "假正例率（FPR）", "真正例率（TPR）"
+        title = f"ROC 曲线：类别 {spec.class_label}"
+    else:
+        y_values, x_values, _thresholds = precision_recall_curve(positives, scores)
+        x_label, y_label = "召回率", "精确率"
+        title = f"精确率-召回率曲线：类别 {spec.class_label}"
+    score_name = "概率" if cache.score_type == "probability" else "决策分数（非概率）"
+    return _payload(
+        source, spec, effective=len(scores), excluded=source.partition_count - len(scores),
+        title=title, x_label=x_label, y_label=y_label,
+        series=(PlotSeries(f"{spec.class_label} · {score_name}", tuple(x_values), tuple(y_values)),),
+        note=f"评分类型：{cache.score_type}；分数来自拟合估计器的实际输出。",
+    )
+
+
+def _native_explanation(source: PlotSource, spec: PlotSpec) -> PlotPayload:
+    cache = source.explanation_cache
+    if cache is None:
+        raise ValueError(source.explanation_unavailable_reason or "当前估计器没有可用的原生特征解释量。")
+    labels = cache.class_labels if cache.kind == "coefficient" else (
+        cache.class_labels or ("特征重要性",)
+    )
+    series = tuple(
+        PlotSeries(str(label), cache.feature_names, values)
+        for label, values in zip(labels, cache.values)
+    )
+    note = (
+        "重要性来自 estimator.feature_importances_。"
+        if cache.kind == "feature_importance"
+        else "系数来自 estimator.coef_；正负方向保留，类别系数按 classes_ 对齐。"
+    )
+    return _payload(
+        source, spec, effective=len(cache.feature_names), excluded=0,
+        title="模型原生特征重要性" if cache.kind == "feature_importance" else "模型原生系数",
+        x_label="变换后特征", y_label="重要性" if cache.kind == "feature_importance" else "系数（正 / 负）",
+        series=series, note=note,
+    )
+
+
 def _regression(source: PlotSource, spec: PlotSpec) -> PlotPayload:
     actual, predicted = (_find_column(source, item) for item in spec.column_ids)
     x_values: list[float] = []
@@ -815,11 +989,18 @@ def build_plot_payload(source: PlotSource, spec: PlotSpec) -> PlotPayload:
         PlotKind.REGRESSION_RESIDUAL: _regression,
         PlotKind.CLUSTER_SCATTER: _cluster_scatter,
         PlotKind.HMM_STATE_POSTERIOR: _hmm_payload,
+        PlotKind.ROC_CURVE: _classification_curve,
+        PlotKind.PRECISION_RECALL: _classification_curve,
+        PlotKind.NATIVE_EXPLANATION: _native_explanation,
     }
     return builders[spec.kind](source, spec)
 
 
 def _count_caption(payload: PlotPayload) -> str:
+    if payload.spec.kind == PlotKind.NATIVE_EXPLANATION:
+        return f"来源 {payload.source_id} · 分区 {payload.partition} · 变换后特征数 {payload.effective_count}"
+    if payload.spec.kind == PlotKind.BATCH_METRIC_COMPARISON:
+        return f"来源 {payload.source_id} · 同条件成功任务数 {payload.effective_count}"
     caption = (
         f"来源 {payload.source_id} · 分区 {payload.partition} · 分区 {payload.partition_count} 行 · "
         f"有效 {payload.effective_count} · 排除 {payload.excluded_count} · 抽样 {payload.sampled_count}"
@@ -926,6 +1107,40 @@ def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
                 axis.scatter(series.x_values, series.y_values, alpha=0.8, label=series.name)
             if payload.series:
                 axis.legend(title="已有簇标签")
+        elif kind in {PlotKind.ROC_CURVE, PlotKind.PRECISION_RECALL}:
+            for series in payload.series:
+                axis.plot(series.x_values, series.y_values, linewidth=2, label=series.name)
+            if kind == PlotKind.ROC_CURVE:
+                axis.plot((0, 1), (0, 1), linestyle="--", color="gray", linewidth=1, label="随机基线")
+            axis.set_xlim(0, 1)
+            axis.set_ylim(0, 1.02)
+            if payload.series:
+                axis.legend(loc="best")
+        elif kind == PlotKind.NATIVE_EXPLANATION:
+            if payload.series:
+                feature_names = payload.series[0].x_values
+                magnitudes = [
+                    max(abs(float(series.y_values[index])) for series in payload.series)
+                    for index in range(len(feature_names))
+                ]
+                top = sorted(range(len(feature_names)), key=lambda index: (-magnitudes[index], index))[:30]
+                positions = np.arange(len(top), dtype=float)
+                width = 0.8 / max(1, len(payload.series))
+                for series_index, series in enumerate(payload.series):
+                    values = [float(series.y_values[index]) for index in top]
+                    axis.barh(
+                        positions + (series_index - (len(payload.series) - 1) / 2) * width,
+                        values, height=width, label=series.name,
+                    )
+                axis.set_yticks(positions, [_label_text(feature_names[index]) for index in top])
+                axis.invert_yaxis()
+                if payload.y_label.startswith("系数"):
+                    axis.axvline(0.0, color="black", linewidth=1)
+                if len(payload.series) > 1 or (payload.series and payload.y_label.startswith("系数")):
+                    axis.legend(title="类别 / 输出")
+        elif kind == PlotKind.BATCH_METRIC_COMPARISON:
+            axis.bar(range(len(payload.x_values)), payload.y_values, color="#2563EB")
+            axis.set_xticks(range(len(payload.x_values)), [str(value) for value in payload.x_values], rotation=30, ha="right")
         axis.set_title(payload.title)
         axis.set_xlabel(payload.x_label)
         axis.set_ylabel(payload.y_label)
@@ -955,10 +1170,12 @@ def _utc_datetime_from_ns(value: object) -> datetime:
 __all__ = [
     "CorrelationCount",
     "PlotColumn",
+    "PlotExplanationCache",
     "PlotKind",
     "PlotPayload",
     "PlotProvenance",
     "PlotSequenceMap",
+    "PlotScoreCache",
     "PlotSeries",
     "PlotSource",
     "PlotSpec",

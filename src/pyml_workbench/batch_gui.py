@@ -4,6 +4,7 @@ from __future__ import annotations
 import codecs
 import csv
 import json
+import joblib
 import math
 import os
 import re
@@ -11,12 +12,13 @@ from pathlib import Path
 import sys
 import tempfile
 import uuid
+from datetime import datetime
 from typing import Any
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, Qt
+from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -38,24 +40,29 @@ from PySide6.QtWidgets import (
 )
 
 from .batch import (
+    _frozen_selection_recovery_identity,
     _finite_objective_score,
     _rank_validation_group_entries,
     request_job_control,
 )
 from .catalog import list_models
+from .checkpoints import CheckpointError, load_checkpoint, save_checkpoint
 from .config import DatasetConfig, ExperimentConfig, SplitConfig
 from .data import load_dataset
 from .history import HistoryStore
 from .objectives import ObjectiveSpec
 from .search import SearchSpec
 from .runtime import worker_command
+from .run_timing import RunTiming, format_duration, summarize_batch_outcomes
 from .search_space import SearchSpace, recommended_space
+from .selection import FrozenSelection
 from .sequence import SequenceConfig
 from .sequence_reporting import sequence_plan_summary_from_manifest
+from .preferences import default_batch_directory
 from .plot_cache import load_batch_plot_sources
 from .plot_dialog import PlotDialog
-from .plotting import build_plot_payload
-from .gui import PlotSourceChooserDialog
+from .plotting import PlotKind, PlotPayload, PlotSpec, build_plot_payload
+from .gui import PlotSourceChooserDialog, _record_file_dialog_result
 
 
 TASKS = (
@@ -68,6 +75,11 @@ TASKS = (
 )
 
 _WORKER_ERROR_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_SESSION_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_KEEP_SAFE_INTERRUPTION = object()
 
 
 def _nonnegative_worker_count(value: Any) -> bool:
@@ -92,6 +104,13 @@ class BatchSearchDialog(QDialog):
         self.resize(1220, 860)
         self.setMinimumSize(1000, 720)
         self._worker_action: str | None = None
+        self._worker_job_id: str | None = None
+        self._worker_history_path: Path | None = None
+        self._worker_started = False
+        self._run_timing: RunTiming | None = None
+        self._batch_outcome_state: str | None = None
+        self._batch_outcome_counts: dict[str, int] | None = None
+        self._log_failure_forwarded = False
         self._temporary_request: Path | None = None
         self._stdout_buffer = b""
         self._stderr_text = ""
@@ -102,16 +121,32 @@ class BatchSearchDialog(QDialog):
         self._last_error: str | None = None
         self._initial_config = initial_config
         self._plot_dialogs: list[PlotDialog] = []
+        self._batch_plan_path = default_batch_directory() / "batch-plan.json"
+        self._safe_interruption: dict[str, Any] | None = None
+        self._restored_batch_plan = False
+        self._loading_batch_plan = False
+        self._last_plan_error: str | None = None
+        self._recovery_prompt_shown = False
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
         self.process.readyReadStandardOutput.connect(self._read_stdout)
         self.process.readyReadStandardError.connect(self._read_stderr)
+        self.process.started.connect(self._process_started)
         self.process.finished.connect(self._process_finished)
         self.process.errorOccurred.connect(self._process_error)
+        self._run_timer = QTimer(self)
+        self._run_timer.setInterval(1000)
+        self._run_timer.timeout.connect(self._update_run_timing)
+        self._plan_save_timer = QTimer(self)
+        self._plan_save_timer.setSingleShot(True)
+        self._plan_save_timer.setInterval(500)
+        self._plan_save_timer.timeout.connect(self._save_batch_plan_debounced)
         self._build_ui()
         self._connect_ui()
+        self._load_batch_plan()
         self._refresh_controls()
         self._update_preview()
+        QTimer.singleShot(0, self._offer_resume_or_new)
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -120,7 +155,7 @@ class BatchSearchDialog(QDialog):
 
         path_row = QHBoxLayout()
         path_row.addWidget(QLabel("批次目录"))
-        self.root_edit = QLineEdit(str(Path(tempfile.gettempdir()) / "pyml_workbench_batch"))
+        self.root_edit = QLineEdit(str(default_batch_directory()))
         self.root_edit.setAccessibleName("批次与历史目录")
         path_row.addWidget(self.root_edit, 1)
         self.root_browse_button = QPushButton("选择目录")
@@ -191,6 +226,8 @@ class BatchSearchDialog(QDialog):
         self.add_files_button = QPushButton("添加多个数据文件")
         self.start_button = QPushButton("预检并启动队列")
         self.start_button.setObjectName("primaryButton")
+        self.safe_close_button = QPushButton("保存并停止后台后关闭")
+        self.safe_close_button.setAccessibleName("保存批次计划，停止调度 worker 并关闭窗口")
         self.pause_button = QPushButton("暂停所选任务")
         self.resume_button = QPushButton("恢复所选任务")
         self.cancel_button = QPushButton("取消所选任务")
@@ -204,9 +241,12 @@ class BatchSearchDialog(QDialog):
         self.export_button = QPushButton("导出对比 CSV")
         self.plot_result_button = QPushButton("绘制结果图…")
         self.plot_result_button.setAccessibleName("绘制所选批量任务的结果图")
+        self.compare_models_button = QPushButton("绘制同组模型指标图…")
+        self.compare_models_button.setAccessibleName("绘制严格同条件批量模型指标比较")
         for button in (
             self.add_current_button, self.add_files_button, self.start_button,
             self.pause_button, self.resume_button, self.cancel_button,
+            self.safe_close_button,
         ):
             tools_row.addWidget(button)
         root_layout.addLayout(tools_row)
@@ -214,6 +254,7 @@ class BatchSearchDialog(QDialog):
         for button in (
             self.freeze_button, self.finalize_button, self.export_exploration_button,
             self.refresh_button, self.export_button, self.plot_result_button,
+            self.compare_models_button,
         ):
             selection_row.addWidget(button)
         root_layout.addLayout(selection_row)
@@ -255,6 +296,14 @@ class BatchSearchDialog(QDialog):
         )
         self.status_label.setWordWrap(True)
         root_layout.addWidget(self.status_label)
+        self.start_time_label = QLabel("开始时间：—")
+        self.elapsed_time_label = QLabel("已用时间：0 秒")
+        self.estimated_finish_label = QLabel("预计完成：待估算")
+        self.end_time_label = QLabel("实际结束时间：—")
+        root_layout.addWidget(self.start_time_label)
+        root_layout.addWidget(self.elapsed_time_label)
+        root_layout.addWidget(self.estimated_finish_label)
+        root_layout.addWidget(self.end_time_label)
         self.copy_error_button = QPushButton("复制错误详情")
         self.copy_error_button.setAccessibleName("复制批量错误 ID 和 traceback")
         self.copy_error_button.setEnabled(False)
@@ -280,6 +329,7 @@ class BatchSearchDialog(QDialog):
 
     def _connect_ui(self) -> None:
         self.root_browse_button.clicked.connect(self._browse_root)
+        self.safe_close_button.clicked.connect(self.close)
         self.load_history_button.clicked.connect(self.refresh_history)
         self.add_current_button.clicked.connect(self._add_current_config)
         self.add_files_button.clicked.connect(self._add_files)
@@ -293,6 +343,7 @@ class BatchSearchDialog(QDialog):
         self.refresh_button.clicked.connect(self.refresh_history)
         self.export_button.clicked.connect(self.export_comparison)
         self.plot_result_button.clicked.connect(self._plot_selected)
+        self.compare_models_button.clicked.connect(self._plot_comparison_group)
         self.datasets_edit.textChanged.connect(self._update_preview)
         self.spaces_edit.textChanged.connect(self._update_preview)
         self.max_fits_spin.valueChanged.connect(self._update_preview)
@@ -300,6 +351,14 @@ class BatchSearchDialog(QDialog):
         self.minutes_spin.valueChanged.connect(self._update_preview)
         self.parallel_spin.valueChanged.connect(self._update_preview)
         self.jobs_table.itemSelectionChanged.connect(self._selected_job_changed)
+        self.root_edit.textChanged.connect(self._schedule_batch_plan_save)
+        self.datasets_edit.textChanged.connect(self._schedule_batch_plan_save)
+        self.spaces_edit.textChanged.connect(self._schedule_batch_plan_save)
+        self.method_combo.currentIndexChanged.connect(self._schedule_batch_plan_save)
+        self.max_fits_spin.valueChanged.connect(self._schedule_batch_plan_save)
+        self.max_proposals_spin.valueChanged.connect(self._schedule_batch_plan_save)
+        self.minutes_spin.valueChanged.connect(self._schedule_batch_plan_save)
+        self.parallel_spin.valueChanged.connect(self._schedule_batch_plan_save)
 
     def _set_current_config(self, config: ExperimentConfig) -> None:
         dataset = config.dataset
@@ -336,6 +395,18 @@ class BatchSearchDialog(QDialog):
         if config is None:
             self._show_error("请先在主窗口加载数据并选择任务与模型，或直接编辑数据配置 JSON。")
             return
+        raw_rows = self.datasets_edit.toPlainText().strip()
+        if raw_rows:
+            try:
+                self._parse_dataset_rows()
+            except (TypeError, ValueError) as exc:
+                try:
+                    is_empty_array = json.loads(raw_rows) == []
+                except json.JSONDecodeError:
+                    is_empty_array = False
+                if not is_empty_array:
+                    self._show_error(f"现有批量数据配置格式有误，请先修正后再添加。原因：{exc}")
+                    return
         if not self.datasets_edit.toPlainText().strip() or self.datasets_edit.toPlainText().strip() == "[]":
             self._set_current_config(config)
         else:
@@ -346,12 +417,27 @@ class BatchSearchDialog(QDialog):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "添加数据文件", "", "表格文件 (*.csv *.xlsx *.xls)"
         )
+        _record_file_dialog_result(self.logging_controller, "add_batch_data_files", bool(paths))
         if not paths:
             return
-        try:
-            rows = self._parse_dataset_rows()
-        except Exception:
+        raw_rows = self.datasets_edit.toPlainText().strip()
+        if not raw_rows:
             rows = []
+        else:
+            try:
+                rows = self._parse_dataset_rows()
+            except (TypeError, ValueError) as exc:
+                # An explicitly empty array is equivalent to an empty editor;
+                # all other invalid input must remain untouched for correction.
+                try:
+                    is_empty_array = json.loads(raw_rows) == []
+                except json.JSONDecodeError:
+                    is_empty_array = False
+                if is_empty_array:
+                    rows = []
+                else:
+                    self._show_error(f"现有批量数据配置格式有误，请先修正后再添加。原因：{exc}")
+                    return
         defaults = self._initial_config
         task = defaults.task if defaults else "classification"
         default_model = defaults.model_id if defaults else self._first_model(task)
@@ -417,6 +503,7 @@ class BatchSearchDialog(QDialog):
         spaces = self._parse_spaces()
         requests: list[tuple[ExperimentConfig, SearchSpec]] = []
         method = self.method_combo.currentData()
+        availability = {item["id"]: item for item in list_models()}
         for row_number, row in enumerate(rows, 1):
             features = row.get("feature_columns")
             dataset = DatasetConfig(
@@ -428,6 +515,13 @@ class BatchSearchDialog(QDialog):
             split = SplitConfig(seed=int(row.get("seed", 42)))
             objective = ObjectiveSpec.from_dict(row.get("objective"))
             for model_id in row["models"]:
+                model_status = availability.get(model_id)
+                if model_status is None:
+                    raise ValueError(f"第 {row_number} 份数据包含未知或未实现模型 {model_id}。")
+                if model_status.get("runtime_available") is False:
+                    raise ValueError(
+                        f"批量模型 {model_id} 当前不可用：{model_status.get('unavailable_reason', '可选依赖缺失')}"
+                    )
                 try:
                     raw_space = spaces.get(model_id)
                     space = SearchSpace.from_dict(raw_space) if raw_space is not None else recommended_space(model_id)
@@ -460,17 +554,30 @@ class BatchSearchDialog(QDialog):
     def _update_preview(self, *_args) -> None:
         try:
             rows = self._parse_dataset_rows()
+            availability = {item["id"]: item for item in list_models()}
             combinations = sum(len(row["models"]) for row in rows)
             per_combo_fits = self.max_fits_spin.value()
             max_total_fits = combinations * per_combo_fits
             max_total_proposals = combinations * self.max_proposals_spin.value()
             parallel = self.parallel_spin.value()
             max_wall_minutes = combinations * self.minutes_spin.value() / parallel
+            unavailable = []
+            for row_number, row in enumerate(rows, 1):
+                for model_id in row["models"]:
+                    model = availability.get(model_id)
+                    if model is not None and model.get("runtime_available") is False:
+                        unavailable.append(
+                            f"第 {row_number} 项 {model_id}：{model.get('unavailable_reason', '可选依赖不可用')}"
+                        )
+            availability_note = ""
+            if unavailable:
+                availability_note = "\n不可用模型（启动前会阻止入队）：" + "；".join(unavailable)
             self.preview_label.setText(
                 f"{len(rows)} 份独立数据配置 × 共 {combinations} 个兼容模型组合；"
                 f"最多 {max_total_fits} 次真实搜索拟合、{max_total_proposals} 个 proposals，"
                 f"活动时长上限约 {max_wall_minutes:.1f} worker 分钟（每组合 {self.minutes_spin.value()} 分钟，"
                 f"最多 {parallel} 个并行 worker）。Grid/TPE/随机/遗传/退火均使用同一类型化空间。"
+                f"{availability_note}"
             )
         except Exception as exc:
             self.preview_label.setText(f"配置预览：{exc}")
@@ -485,6 +592,9 @@ class BatchSearchDialog(QDialog):
             if root.exists() and not root.is_dir():
                 raise ValueError(f"批次路径不是目录：{root}")
             history = root / "history.sqlite3"
+            if not self._save_batch_plan():
+                self._show_error(f"无法保存批量计划，队列未启动：{self._last_plan_error}")
+                return False
             payload = [
                 {"config": config.to_dict(), "spec": spec.to_dict()}
                 for config, spec in requests
@@ -514,24 +624,118 @@ class BatchSearchDialog(QDialog):
 
     def _start_worker(self, arguments: list[str], *, action: str) -> None:
         self._worker_action = action
+        self._worker_started = False
+        self._worker_history_path = None
+        self._worker_job_id = None
+        try:
+            history_index = arguments.index("--history")
+            self._worker_history_path = Path(arguments[history_index + 1]).expanduser().resolve()
+        except (ValueError, IndexError, OSError, RuntimeError):
+            pass
+        if action == "batch-finalize":
+            try:
+                job_index = arguments.index("--job-id")
+                self._worker_job_id = arguments[job_index + 1]
+            except (ValueError, IndexError):
+                pass
         self._stdout_buffer = b""
         self._stderr_text = ""
         self._stderr_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._error_details = []
         self._last_error = None
+        self._batch_outcome_state = None
+        self._batch_outcome_counts = None
+        self._log_failure_forwarded = False
         self.copy_error_button.setEnabled(False)
+        self._run_timing = RunTiming(action)
+        self.start_time_label.setText("开始时间：等待后台进程启动")
+        self.elapsed_time_label.setText("已用时间：0 秒")
+        self.estimated_finish_label.setText("预计完成：待估算；搜索总时长尚无可靠总体进度依据。")
+        self.end_time_label.setText("实际结束时间：—")
+        self._run_timer.start()
         environment = QProcessEnvironment.systemEnvironment()
         controller_root = getattr(self.logging_controller, "log_root", None)
         parent_preferences = getattr(self.parent(), "preferences", None)
         log_root = controller_root or getattr(parent_preferences, "log_directory", None)
         if log_root:
             environment.insert("PYML_LOG_ROOT", str(log_root))
+        operation_log_path = getattr(self.logging_controller, "operation_log_path", None)
+        if operation_log_path:
+            environment.insert("PYML_OPERATION_LOG_PATH", str(operation_log_path))
         environment.insert("PYML_LOG_SESSION_ID", uuid.uuid4().hex)
         self.process.setProcessEnvironment(environment)
         self.process.setWorkingDirectory(str(Path.cwd()))
         executable, worker_arguments = worker_command(arguments)
         self.process.start(executable, worker_arguments)
         self._refresh_controls()
+
+    def _process_started(self) -> None:
+        self._worker_started = True
+        timing = self._run_timing
+        if timing is None or timing.started_monotonic is not None:
+            return
+        timing.start()
+        self._update_run_timing()
+        if self.logging_controller is not None:
+            try:
+                self.logging_controller.record_event(
+                    "worker_started",
+                    message=json.dumps(
+                        {"action": timing.action, "started_at_local": timing.started_local.isoformat(timespec="seconds")},
+                        ensure_ascii=False,
+                    ),
+                    context={"stage": timing.action},
+                )
+            except Exception:
+                pass
+
+    def _update_run_timing(self) -> None:
+        timing = self._run_timing
+        if timing is None:
+            return
+        if timing.started_local is None:
+            self.start_time_label.setText("开始时间：等待后台进程启动")
+            return
+        self.start_time_label.setText(
+            f"开始时间：{timing.started_local:%Y-%m-%d %H:%M:%S}"
+        )
+        self.elapsed_time_label.setText(
+            f"已用时间：{format_duration(timing.elapsed_seconds)}"
+        )
+        self.estimated_finish_label.setText(
+            "预计完成：待估算；批量任务当前没有可靠的整体剩余工作量。"
+        )
+
+    def _finish_run_timing(self, state: str) -> None:
+        timing = self._run_timing
+        if timing is None or timing.ended_monotonic is not None:
+            return
+        ended_local, elapsed = timing.finish()
+        self._run_timer.stop()
+        state_label = {"success": "成功", "failed": "失败", "cancelled": "已取消"}.get(state, state)
+        self._update_run_timing()
+        self.estimated_finish_label.setText(f"预计完成：任务已结束（{state_label}）。")
+        self.end_time_label.setText(
+            f"实际结束时间：{ended_local:%Y-%m-%d %H:%M:%S}（{state_label}）"
+        )
+        if self.logging_controller is not None:
+            try:
+                message = {
+                    "action": timing.action,
+                    "state": state,
+                    "ended_at_local": ended_local.isoformat(timespec="seconds"),
+                    "elapsed_seconds": round(elapsed, 3),
+                }
+                if self._batch_outcome_counts is not None:
+                    message["outcome_counts"] = self._batch_outcome_counts
+                self.logging_controller.record_event(
+                    "worker_finished",
+                    level="INFO" if state == "success" else "WARNING",
+                    message=json.dumps(message, ensure_ascii=False),
+                    context={"stage": timing.action},
+                )
+            except Exception:
+                pass
 
     def _read_stdout(self) -> None:
         self._stdout_buffer += bytes(self.process.readAllStandardOutput())
@@ -554,12 +758,25 @@ class BatchSearchDialog(QDialog):
         self._stderr_text += decoder.decode(
             bytes(self.process.readAllStandardError()), final=False
         )
+        self._forward_operation_log_failure()
+
+    def _forward_operation_log_failure(self) -> None:
+        if self._log_failure_forwarded:
+            return
+        prefix = "[PYML_OPERATION_LOG_FAILURE]"
+        for line in self._stderr_text.splitlines():
+            if line.startswith(prefix):
+                self._log_failure_forwarded = True
+                if self.logging_controller is not None:
+                    self.logging_controller.report_write_failure(line[len(prefix):].strip())
+                return
 
     def _flush_stderr(self) -> None:
         self._read_stderr()
         decoder, self._stderr_decoder = self._stderr_decoder, None
         if decoder is not None:
             self._stderr_text += decoder.decode(b"", final=True)
+        self._forward_operation_log_failure()
 
     def _remember_error(
         self,
@@ -800,8 +1017,15 @@ class BatchSearchDialog(QDialog):
                 self.refresh_history()
             elif phase == "finished":
                 outcomes = payload.get("outcomes", [])
-                failed = sum(item.get("status") == "failed" for item in outcomes)
-                self.status_label.setText(f"队列搜索结束：{len(outcomes) - failed} 个完成，{failed} 个失败。")
+                self._batch_outcome_state, self._batch_outcome_counts = summarize_batch_outcomes(outcomes)
+                completed = self._batch_outcome_counts["completed"]
+                failed = self._batch_outcome_counts["failed"]
+                cancelled = self._batch_outcome_counts["cancelled"]
+                unknown = self._batch_outcome_counts["unknown"]
+                self.status_label.setText(
+                    f"队列搜索结束：{completed} 个完成，{failed} 个失败，{cancelled} 个取消"
+                    + (f"，{unknown} 个状态未知。" if unknown else "。")
+                )
                 for outcome in outcomes:
                     if outcome.get("error_id"):
                         self._remember_error(
@@ -827,6 +1051,14 @@ class BatchSearchDialog(QDialog):
                     f"最终会话状态 {final.get('state')}；test_evaluation_count={final.get('test_evaluation_count')}。"
                 )
                 self._append_log(f"最终测试结果已缓存：{payload.get('job_id')}")
+                if (
+                    self._safe_interruption is not None
+                    and self._safe_interruption.get("job_id") == payload.get("job_id")
+                ):
+                    if not self._save_batch_plan(safe_interruption=None):
+                        self.status_label.setText(
+                            f"最终测试已完成，但安全中断凭据清理失败：{self._last_plan_error}"
+                        )
                 self.refresh_history()
             elif phase == "training_exploration_exported":
                 result = payload.get("result", {})
@@ -863,6 +1095,7 @@ class BatchSearchDialog(QDialog):
             return
 
     def _process_finished(self, exit_code: int, _exit_status) -> None:
+        action = self._worker_action
         self._read_stdout()
         self._flush_stderr()
         if self._stdout_buffer.strip():
@@ -898,12 +1131,25 @@ class BatchSearchDialog(QDialog):
                 )
                 self.logging_controller.record_process_exit(
                     exit_code,
-                    context={"stage": self._worker_action or "batch_worker"},
+                    context={"stage": action or "batch_worker"},
                     error_id=error_id,
                 )
             except Exception:
                 pass
+        timing_state = "failed" if exit_code != 0 or self._last_error is not None else "success"
+        if action in {"batch-run-request", "batch-run"}:
+            timing_state = (
+                "failed"
+                if exit_code != 0 or self._last_error is not None
+                else self._batch_outcome_state or "failed"
+            )
+            if self._batch_outcome_state is None and exit_code == 0 and self._last_error is None:
+                self.status_label.setText("后台进程结束，但没有收到搜索完成摘要。")
+        self._finish_run_timing(timing_state)
         self._worker_action = None
+        self._worker_history_path = None
+        self._worker_job_id = None
+        self._worker_started = False
         self.refresh_history()
         self._refresh_controls()
 
@@ -919,7 +1165,11 @@ class BatchSearchDialog(QDialog):
             self.status_label.setText(f"无法启动批量 worker：{self._last_error}")
             self._append_log(self.status_label.text())
             self._record_external_errors()
+            self._finish_run_timing("failed")
             self._worker_action = None
+            self._worker_history_path = None
+            self._worker_job_id = None
+            self._worker_started = False
             self._refresh_controls()
 
     @staticmethod
@@ -1294,6 +1544,7 @@ class BatchSearchDialog(QDialog):
         destination, _ = QFileDialog.getSaveFileName(
             self, "导出批量结果对比", str(root / "comparison.csv"), "CSV 文件 (*.csv)"
         )
+        _record_file_dialog_result(self.logging_controller, "save_batch_comparison", bool(destination))
         if not destination:
             return
         try:
@@ -1375,6 +1626,506 @@ class BatchSearchDialog(QDialog):
     def _history_path(self) -> Path:
         return Path(self.root_edit.text().strip()).expanduser().resolve() / "history.sqlite3"
 
+    def _batch_plan_payload(self, safe_interruption=_KEEP_SAFE_INTERRUPTION) -> dict[str, Any]:
+        raw_root = self.root_edit.text().strip()
+        if not raw_root:
+            raise ValueError("批次目录不能为空")
+        root = Path(raw_root).expanduser().resolve()
+        marker = (
+            self._safe_interruption
+            if safe_interruption is _KEEP_SAFE_INTERRUPTION
+            else safe_interruption
+        )
+        return {
+            "directory": str(root),
+            "datasets": self.datasets_edit.toPlainText(),
+            "spaces": self.spaces_edit.toPlainText(),
+            "search_method": self.method_combo.currentData(),
+            "max_fits": self.max_fits_spin.value(),
+            "max_proposals": self.max_proposals_spin.value(),
+            "time_limit_minutes": self.minutes_spin.value(),
+            "worker_count": self.parallel_spin.value(),
+            "safe_interruption": marker,
+        }
+
+    @staticmethod
+    def _validated_safe_interruption(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        job_id = value.get("job_id")
+        session_id = value.get("final_session_id")
+        history_path = value.get("history_path")
+        identity = {
+            key: value.get(key)
+            for key in (
+                "selection_sha256",
+                "config_sha256",
+                "snapshot_sha256",
+                "source_sha256",
+                "data_sha256",
+                "split_sha256",
+            )
+        }
+        if (
+            value.get("action") != "batch-finalize"
+            or value.get("worker_stopped") is not True
+            or value.get("complete_receipt") is not False
+            or not isinstance(job_id, str)
+            or not _WORKER_ERROR_ID_RE.fullmatch(job_id)
+            or not isinstance(session_id, str)
+            or not _SESSION_ID_RE.fullmatch(session_id)
+            or not isinstance(history_path, str)
+            or not history_path.strip()
+            or "\x00" in history_path
+            or any(not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest) for digest in identity.values())
+        ):
+            return None
+        path = Path(history_path).expanduser()
+        if not path.is_absolute():
+            return None
+        try:
+            normalized_path = str(path.resolve())
+        except (OSError, RuntimeError):
+            return None
+        return {
+            "action": "batch-finalize",
+            "worker_stopped": True,
+            "complete_receipt": False,
+            "job_id": job_id,
+            "final_session_id": session_id,
+            "history_path": normalized_path,
+            **identity,
+            "stopped_at_local": value.get("stopped_at_local")
+            if isinstance(value.get("stopped_at_local"), str)
+            else None,
+        }
+
+    def _load_batch_plan(self) -> None:
+        try:
+            payload = load_checkpoint(self._batch_plan_path, scope="batch-plan")
+        except CheckpointError as exc:
+            self.status_label.setText(f"批量计划恢复失败：{exc}")
+            return
+        if payload is None:
+            return
+        self._loading_batch_plan = True
+        try:
+            directory = payload.get("directory")
+            if isinstance(directory, str) and directory.strip() and "\x00" not in directory:
+                self.root_edit.setText(str(Path(directory).expanduser().resolve()))
+            datasets = payload.get("datasets")
+            spaces = payload.get("spaces")
+            if isinstance(datasets, str):
+                self.datasets_edit.setPlainText(datasets)
+            if isinstance(spaces, str):
+                self.spaces_edit.setPlainText(spaces)
+            method = payload.get("search_method")
+            method_index = self.method_combo.findData(method)
+            if method_index >= 0:
+                self.method_combo.setCurrentIndex(method_index)
+            for key, widget in (
+                ("max_fits", self.max_fits_spin),
+                ("max_proposals", self.max_proposals_spin),
+                ("time_limit_minutes", self.minutes_spin),
+                ("worker_count", self.parallel_spin),
+            ):
+                value = payload.get(key)
+                if type(value) is int and widget.minimum() <= value <= widget.maximum():
+                    widget.setValue(value)
+            self._safe_interruption = self._validated_safe_interruption(
+                payload.get("safe_interruption")
+            )
+            self._restored_batch_plan = True
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.status_label.setText(f"批量计划格式无效：{exc}")
+        finally:
+            self._loading_batch_plan = False
+            self._plan_save_timer.stop()
+
+    def _schedule_batch_plan_save(self, *_args) -> None:
+        if not self._loading_batch_plan:
+            self._plan_save_timer.start()
+
+    def _save_batch_plan_debounced(self) -> None:
+        if not self._save_batch_plan():
+            self.status_label.setText(
+                f"批量计划保存失败；再次关闭前请处理：{self._last_plan_error}"
+            )
+
+    def _save_batch_plan(self, *, safe_interruption=_KEEP_SAFE_INTERRUPTION) -> bool:
+        try:
+            payload = self._batch_plan_payload(safe_interruption)
+            is_default_directory = Path(payload["directory"]) == default_batch_directory().resolve()
+            if (
+                not self._restored_batch_plan
+                and not payload["datasets"].strip()
+                and not payload["spaces"].strip()
+                and payload["safe_interruption"] is None
+                and is_default_directory
+            ):
+                return True
+            save_checkpoint(self._batch_plan_path, payload, scope="batch-plan")
+        except (CheckpointError, OSError, RuntimeError, ValueError) as exc:
+            self._last_plan_error = str(exc)
+            return False
+        self._safe_interruption = self._validated_safe_interruption(
+            payload["safe_interruption"]
+        )
+        self._restored_batch_plan = True
+        self._last_plan_error = None
+        return True
+
+    def _safe_interruption_to_resume(self) -> dict[str, Any] | None:
+        marker = self._validated_safe_interruption(self._safe_interruption)
+        if marker is None:
+            return None
+        history_path = Path(marker["history_path"])
+        if not history_path.is_file():
+            return None
+        try:
+            store = HistoryStore(history_path)
+            job = store.get_job(marker["job_id"])
+            permission = store.get_test_permission(marker["job_id"])
+            if job is None or permission is None:
+                return None
+            if (
+                permission.get("state") != "consumed"
+                or permission.get("final_session_id") != marker["final_session_id"]
+                or permission.get("finished_at") is not None
+                or permission.get("result_json") is not None
+                or permission.get("error_text") is not None
+            ):
+                return None
+            artifact_dir = Path(job["artifact_dir"]).expanduser().resolve()
+            selection = joblib.load(artifact_dir / "frozen-selection.joblib")
+            if (
+                not isinstance(selection, FrozenSelection)
+                or selection.job_id != marker["job_id"]
+                or selection.metadata.get("objective", {}).get("split") != "validation"
+            ):
+                return None
+            identity = _frozen_selection_recovery_identity(selection)
+            if any(marker.get(key) != value for key, value in identity.items()):
+                return None
+            split_summary = json.loads(job.get("split_json", "{}"))
+            if (
+                job.get("dataset_id") != identity["source_sha256"]
+                or job.get("snapshot_sha256") != identity["snapshot_sha256"]
+                or not isinstance(split_summary, dict)
+                or split_summary.get("seed") != selection.config.split.seed
+                or split_summary.get("split_sha256") != identity["split_sha256"]
+                or split_summary.get("positions") != selection.snapshot.manifest.get("split_positions")
+            ):
+                return None
+            envelope_path = artifact_dir / "final-session.joblib"
+            envelope = joblib.load(envelope_path)
+            if (
+                not isinstance(envelope, dict)
+                or envelope.get("session_id") != marker["final_session_id"]
+                or envelope.get("session_path") != str(envelope_path)
+                or envelope.get("selection_sha256") != identity["selection_sha256"]
+                or envelope.get("selection") != selection.to_dict()
+                or envelope.get("state") not in {"testing", "tested"}
+            ):
+                return None
+            return {
+                "kind": "interrupted_test" if envelope["state"] == "testing" else "cached_test",
+                "job_id": marker["job_id"],
+                "history_path": history_path,
+                "checkpoint_path": self._batch_plan_path,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _saved_history_jobs(history_path: Path) -> list[dict[str, Any]]:
+        if not history_path.is_file():
+            return []
+        try:
+            return HistoryStore(history_path).list_jobs()
+        except Exception:
+            return []
+
+    def _pending_search_jobs(self) -> tuple[Path, list[str]]:
+        history_path = self._history_path()
+        jobs = self._saved_history_jobs(history_path)
+        resumable = [
+            job["job_id"]
+            for job in jobs
+            if job.get("status") in {"queued", "running", "pausing", "paused"}
+        ]
+        return history_path, resumable
+
+    def _restore_saved_batch_view(
+        self,
+        *,
+        history_path: Path,
+        history_jobs: list[dict[str, Any]],
+    ) -> None:
+        self.refresh_history()
+        completed_count = sum(job.get("status") == "completed" for job in history_jobs)
+        if history_jobs:
+            self.status_label.setText(
+                f"已恢复批量设置并显示 {len(history_jobs)} 条已有历史，其中 {completed_count} 条已完成。"
+                "历史状态与结果保持原样；不会重新拟合或执行最终测试。"
+            )
+        elif self._restored_batch_plan:
+            self.status_label.setText(
+                "已恢复已保存的批量设置；没有历史任务。当前只显示设置，不会启动搜索或最终测试。"
+            )
+        else:
+            self.status_label.setText(f"没有可恢复的批量历史：{history_path}")
+
+    def _start_new_batch(self) -> bool:
+        old_root = Path(self.root_edit.text().strip()).expanduser().resolve()
+        new_root = old_root.parent / f"{old_root.name or 'batch'}-new-{uuid.uuid4().hex[:8]}"
+        self._plan_save_timer.stop()
+        self.root_edit.setText(str(new_root))
+        if not self._save_batch_plan():
+            self.root_edit.setText(str(old_root))
+            self._show_error(f"无法保存新批次目录，原批次设置保持不变：{self._last_plan_error}")
+            return False
+        if self.datasets_edit.toPlainText().strip() and self.spaces_edit.toPlainText().strip():
+            return self.start_batch()
+        self.refresh_history()
+        self.status_label.setText(
+            f"已切换到独立新批次目录：{new_root}。旧批次历史、结果和测试权限保持不变；"
+            "请添加数据与搜索空间后启动。"
+        )
+        return True
+
+    def _offer_resume_or_new(self) -> None:
+        if getattr(self, "_recovery_prompt_shown", False):
+            return
+        self._recovery_prompt_shown = True
+        if self.process.state() != QProcess.ProcessState.NotRunning:
+            return
+        safe = self._safe_interruption_to_resume()
+        history_path, pending = self._pending_search_jobs()
+        history_jobs = self._saved_history_jobs(history_path)
+        if safe is None and not pending and not history_jobs and not self._restored_batch_plan:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("恢复批量搜索")
+        if safe is not None:
+            description = (
+                "发现一个安全停止且尚无最终测试回执的冻结 winner。"
+                "恢复会沿用同一 frozen selection；已完成的测试缓存会只补写回执。"
+            )
+            resume_label = "恢复最终测试"
+        elif pending:
+            completed_count = sum(job.get("status") == "completed" for job in history_jobs)
+            description = (
+                f"发现 {len(pending)} 个未完成任务和 {completed_count} 条已完成结果。"
+                "恢复只继续未完成任务，已有结果保持原样。"
+            )
+            resume_label = "恢复未完成队列"
+        elif history_jobs:
+            completed_count = sum(job.get("status") == "completed" for job in history_jobs)
+            description = (
+                f"发现 {len(history_jobs)} 条已有批量历史，其中 {completed_count} 条已完成。"
+                "恢复只载入设置并显示已有结果，保持完成状态；不会重新拟合或执行最终测试。"
+            )
+            resume_label = "恢复设置并查看成果"
+        else:
+            description = (
+                "发现已保存的批量设置，目前没有历史任务。恢复只载入设置，不会启动搜索或最终测试。"
+            )
+            resume_label = "恢复已保存设置"
+        box.setText(description)
+        box.setInformativeText(
+            "新建会切换到独立批次目录，保留旧历史、结果和测试权限，避免不同实验混用。"
+            "请选择恢复、另开新批次，或稍后处理。"
+        )
+        resume_button = box.addButton(resume_label, QMessageBox.ButtonRole.AcceptRole)
+        new_button = box.addButton("新建独立批次", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("稍后", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is resume_button:
+            if safe is not None:
+                self._resume_saved_batch(safe=safe)
+            else:
+                if pending:
+                    self._resume_saved_batch(history_path=history_path, job_ids=pending)
+                else:
+                    self._restore_saved_batch_view(
+                        history_path=history_path,
+                        history_jobs=history_jobs,
+                    )
+        elif clicked is new_button:
+            self._start_new_batch()
+
+    def _resume_saved_batch(
+        self,
+        *,
+        safe: dict[str, Any] | None = None,
+        history_path: Path | None = None,
+        job_ids: list[str] | None = None,
+    ) -> bool:
+        if safe is not None:
+            path = Path(safe["history_path"])
+            job_id = safe["job_id"]
+            output_dir = path.parent / "exports" / job_id
+            arguments = ["batch-finalize", "--history", str(path), "--job-id", job_id]
+            if safe["kind"] == "interrupted_test":
+                arguments.extend([
+                    "--allow-safe-interrupted-test",
+                    "--recovery-checkpoint",
+                    str(safe.get("checkpoint_path") or self._batch_plan_path),
+                ])
+            if not output_dir.exists():
+                arguments.extend(["--output", str(output_dir)])
+            self._start_worker(arguments, action="batch-finalize")
+            self.status_label.setText(
+                "正在按已确认的安全中断凭据恢复最终测试。"
+                if safe["kind"] == "interrupted_test"
+                else "正在读取已完成的最终测试缓存并补齐回执。"
+            )
+            return True
+        if history_path is None or not job_ids:
+            self._show_error("没有可恢复的队列任务。")
+            return False
+        try:
+            store = HistoryStore(history_path)
+            for job_id in job_ids:
+                job = store.get_job(job_id)
+                if job is None:
+                    raise ValueError(f"恢复任务已从历史中消失：{job_id}")
+                if job.get("status") in {"running", "pausing"} and job.get("control_request") == "pause":
+                    store.set_job_status(
+                        job_id,
+                        "paused",
+                        reason="scheduler stopped before the requested pause reached a safe point",
+                    )
+        except Exception as exc:
+            self._show_error(f"无法准备未完成任务的恢复：{exc}")
+            return False
+        self._start_worker(
+            [
+                "batch-run", "--history", str(history_path), "--job-id", *job_ids,
+                "--parallel-workers", str(self.parallel_spin.value()),
+            ],
+            action="batch-run",
+        )
+        self.status_label.setText(f"已确认恢复 {len(job_ids)} 个未完成队列任务。")
+        return True
+
+    def _safe_interruption_after_stop(
+        self,
+        *,
+        action: str | None,
+        worker_started: bool,
+        history_path: Path | None,
+        job_id: str | None,
+    ) -> dict[str, Any] | None:
+        if (
+            action != "batch-finalize"
+            or worker_started is not True
+            or history_path is None
+            or job_id is None
+        ):
+            return None
+        if not history_path.is_file():
+            return None
+        try:
+            store = HistoryStore(history_path)
+            job = store.get_job(job_id)
+            permission = store.get_test_permission(job_id)
+            if (
+                job is None
+                or permission is None
+                or permission.get("state") != "consumed"
+                or permission.get("finished_at") is not None
+                or permission.get("result_json") is not None
+                or permission.get("error_text") is not None
+            ):
+                return None
+            session_path = Path(job["artifact_dir"]).expanduser().resolve() / "final-session.joblib"
+            selection = joblib.load(
+                Path(job["artifact_dir"]).expanduser().resolve() / "frozen-selection.joblib"
+            )
+            if (
+                not isinstance(selection, FrozenSelection)
+                or selection.job_id != job_id
+                or selection.metadata.get("objective", {}).get("split") != "validation"
+            ):
+                return None
+            identity = _frozen_selection_recovery_identity(selection)
+            split_summary = json.loads(job.get("split_json", "{}"))
+            if (
+                job.get("dataset_id") != identity["source_sha256"]
+                or job.get("snapshot_sha256") != identity["snapshot_sha256"]
+                or not isinstance(split_summary, dict)
+                or split_summary.get("seed") != selection.config.split.seed
+                or split_summary.get("split_sha256") != identity["split_sha256"]
+                or split_summary.get("positions") != selection.snapshot.manifest.get("split_positions")
+            ):
+                return None
+            envelope = joblib.load(session_path)
+            if (
+                not isinstance(envelope, dict)
+                or envelope.get("state") != "testing"
+                or envelope.get("session_id") != permission.get("final_session_id")
+                or envelope.get("session_path") != str(session_path)
+                or envelope.get("selection_sha256") != identity["selection_sha256"]
+                or envelope.get("selection") != selection.to_dict()
+            ):
+                return None
+            return {
+                "action": "batch-finalize",
+                "worker_stopped": True,
+                "complete_receipt": False,
+                "job_id": job_id,
+                "final_session_id": permission["final_session_id"],
+                "history_path": str(history_path.resolve()),
+                **identity,
+                "stopped_at_local": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+        except Exception:
+            return None
+
+    def closeEvent(self, event) -> None:
+        self._plan_save_timer.stop()
+        action = self._worker_action
+        worker_started = self._worker_started
+        history_path = self._worker_history_path
+        job_id = self._worker_job_id
+        if not self._save_batch_plan():
+            self._show_error(f"无法保存批量计划；窗口保持打开：{self._last_plan_error}")
+            event.ignore()
+            return
+        if self.process.state() != QProcess.ProcessState.NotRunning:
+            self.process.terminate()
+            self.process.waitForFinished(1500)
+            if self.process.state() != QProcess.ProcessState.NotRunning:
+                self.process.kill()
+                self.process.waitForFinished(1500)
+            if self.process.state() != QProcess.ProcessState.NotRunning:
+                message = "后台 worker 未能停止；窗口保持打开，请稍后重试关闭。"
+                self.status_label.setText(message)
+                self._append_log(message)
+                event.ignore()
+                return
+        if self._temporary_request is not None:
+            try:
+                self._temporary_request.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._temporary_request = None
+        if action == "batch-finalize":
+            marker = self._safe_interruption_after_stop(
+                action=action,
+                worker_started=worker_started,
+                history_path=history_path,
+                job_id=job_id,
+            )
+            if marker is not None and not self._save_batch_plan(safe_interruption=marker):
+                self._show_error(f"无法保存最终测试安全中断凭据；窗口保持打开：{self._last_plan_error}")
+                event.ignore()
+                return
+        super().closeEvent(event)
+
     def _selected_job(self) -> tuple[str, Path] | None:
         row = self.jobs_table.currentRow()
         if row < 0:
@@ -1411,6 +2162,101 @@ class BatchSearchDialog(QDialog):
             dialog = PlotDialog([payload], parent=self)
         except Exception as exc:
             self.status_label.setText(f"无法生成所选结果图：{exc}")
+            return
+        self._plot_dialogs.append(dialog)
+        dialog.destroyed.connect(
+            lambda _obj=None, target=dialog: self._plot_dialogs.remove(target)
+            if target in self._plot_dialogs else None
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _plot_comparison_group(self) -> None:
+        selected = self._selected_job()
+        if selected is None:
+            self.status_label.setText("请先选择一条已完成的批量任务。")
+            return
+        job_id, _artifact_dir = selected
+        try:
+            store = HistoryStore(self._history_path())
+            selected_job = store.get_job(job_id)
+            if selected_job is None or selected_job.get("status") != "completed":
+                raise ValueError("只有已完成的批量任务可以作为同组比较基准。")
+            group_label, group_key, group = self._comparison_group(selected_job)
+            required_hashes = (group.get("source_sha256"), group.get("data_sha256"), group.get("split_sha256"))
+            if any(
+                not isinstance(value, str) or len(value) != 64
+                or any(character not in "0123456789abcdefABCDEF" for character in value)
+                for value in required_hashes
+            ):
+                raise ValueError("所选任务缺少完整的数据来源、数据内容或实际划分哈希，不能形成严格比较组。")
+            objective = group.get("objective") or {}
+            metric = group.get("metric")
+            direction = group.get("direction")
+            score_split = group.get("score_split")
+            if not metric or direction not in {"min", "max"} or score_split not in {"validation", "train_exploratory"}:
+                raise ValueError("所选任务的指标、方向或评分分区不完整。")
+
+            candidates = []
+            for candidate in store.list_jobs():
+                if candidate.get("status") != "completed":
+                    continue
+                try:
+                    _candidate_label, candidate_key, candidate_group = self._comparison_group(candidate)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if candidate_key != group_key:
+                    continue
+                valid_trials = [
+                    (trial, _finite_objective_score(trial.get("objective_value")))
+                    for trial in store.list_trials(candidate["job_id"])
+                    if trial.get("status") in {"succeeded", "cached"}
+                    and _finite_objective_score(trial.get("objective_value")) is not None
+                ]
+                if not valid_trials:
+                    continue
+                winner, value = (min if direction == "min" else max)(valid_trials, key=lambda item: item[1])
+                candidates.append({
+                    "job_id": candidate["job_id"],
+                    "model_id": candidate.get("model_id") or "model",
+                    "created_at": candidate.get("created_at", ""),
+                    "score": float(value),
+                    "winner_trial_id": winner.get("trial_id"),
+                })
+            if len(candidates) < 2:
+                raise ValueError(
+                    "严格匹配的 comparison_group 中至少需要两个已完成且有成功 winner trial 的任务。"
+                )
+            candidates.sort(key=lambda row: (row["model_id"], row["created_at"], row["job_id"]))
+            duplicates: dict[str, int] = {}
+            for row in candidates:
+                duplicates[row["model_id"]] = duplicates.get(row["model_id"], 0) + 1
+            labels = tuple(
+                f"{row['model_id']} · {row['job_id'][:8]}" if duplicates[row["model_id"]] > 1 else row["model_id"]
+                for row in candidates
+            )
+            payload = PlotPayload(
+                spec=PlotSpec(PlotKind.BATCH_METRIC_COMPARISON),
+                source_kind="batch_cache",
+                source_id=job_id,
+                partition=score_split,
+                partition_count=len(candidates),
+                effective_count=len(candidates),
+                excluded_count=0,
+                title=f"同条件批量比较：{metric}（{direction}）",
+                x_label="模型",
+                y_label=f"{metric}（{direction} 为优）",
+                x_values=labels,
+                y_values=tuple(row["score"] for row in candidates),
+                note=(
+                    f"评分分区：{score_split}；只纳入已完成任务和成功/cached winner trial。"
+                    f" comparison_group：{group_label}"
+                ),
+            )
+            dialog = PlotDialog([payload], parent=self)
+        except Exception as exc:
+            self.status_label.setText(f"无法生成同条件模型指标图：{exc}")
             return
         self._plot_dialogs.append(dialog)
         dialog.destroyed.connect(
@@ -1460,6 +2306,11 @@ class BatchSearchDialog(QDialog):
         self.plot_result_button.setToolTip(
             "从当前 job 所有的结果缓存、快照收据与分区行位置构造图表；无效的 test 凭据不会解锁测试图。"
         )
+        self.compare_models_button.setEnabled(bool(job and job["status"] == "completed" and not running))
+        self.compare_models_button.setToolTip(
+            "仅比较同一严格 comparison_group 内 status=completed 且 winner trial 成功的任务；"
+            "分组包括数据哈希、实际划分哈希、特征/目标、任务、指标方向和评分分区。"
+        )
         artifact_dir = Path(job["artifact_dir"]) if job else None
         selection_saved = bool(artifact_dir and (artifact_dir / "frozen-selection.joblib").is_file())
         self.finalize_button.setEnabled(bool(job and selection_saved and not training_exploratory and not running))
@@ -1469,6 +2320,7 @@ class BatchSearchDialog(QDialog):
 
     def _browse_root(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择批次与历史目录", self.root_edit.text())
+        _record_file_dialog_result(self.logging_controller, "select_batch_directory", bool(directory))
         if directory:
             self.root_edit.setText(directory)
             self.refresh_history()

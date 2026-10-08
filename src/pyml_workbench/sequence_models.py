@@ -83,11 +83,16 @@ def validate_extended_parameters(
             "random_state": None,
         }
         allowed = set(defaults)
+        allowed.add("device")
+        if model_id == "N01":
+            defaults["device"] = "cpu"
         choices = {}
     unknown = sorted(set(requested) - allowed)
     if unknown:
         raise ExtendedModelError(f"Unsupported parameters for {model_id}: {', '.join(unknown)}")
     values = defaults | requested
+    if "device" in values:
+        values["device"] = _normalize_device(model_id, values["device"])
     for name in ("n_components", "n_iter", "n_mix", "hidden_size", "num_layers", "batch_size", "max_epochs", "patience"):
         if name in values:
             value = values[name]
@@ -142,6 +147,31 @@ def validate_extended_parameters(
         if values[name] not in options:
             raise ExtendedModelError(f"{model_id} parameter {name} must be one of {sorted(options)}")
     return values
+
+
+def _normalize_device(model_id: str, device: Any) -> str:
+    if not isinstance(device, str) or device.lower().strip() not in {"cpu", "cuda", "gpu", "auto"}:
+        raise ExtendedModelError("device must be one of cpu, cuda, gpu, auto")
+    selected = device.lower().strip()
+    selected = "cuda" if selected == "gpu" else selected
+    if model_id != "N01" and selected != "cpu":
+        raise ExtendedModelError("仅 N01 神经网络分类支持 CUDA GPU；其它模型请使用 CPU。")
+    return selected
+
+
+def resolve_deep_device(model_id: str, device: Any = "cpu") -> str:
+    """Validate explicit GPU requests and resolve auto without eagerly loading torch."""
+    selected = _normalize_device(model_id, device)
+    if selected == "cpu":
+        return selected
+    from .runtime import gpu_capability
+
+    capability = gpu_capability()
+    if capability["available"]:
+        return "cuda"
+    if selected == "auto":
+        return "cpu"
+    raise ExtendedModelError(f"无法使用 GPU：{capability['reason']}")
 
 
 def resolve_deep_seed(parameters: Mapping[str, Any], fallback_seed: Any) -> int:
@@ -411,13 +441,20 @@ def _torch_module_type() -> tuple[Any, type]:
 
 
 @contextmanager
-def deep_cpu_context(seed: int | None = None) -> Iterator[Any]:
-    """Serialize torch-global RNG/thread changes and restore caller state."""
+def deep_cpu_context(seed: int | None = None, *, device: str = "cpu") -> Iterator[Any]:
+    """Bound CPU threads and serialize/restore torch CPU and CUDA RNG changes."""
     with _DEEP_TRAIN_LOCK:
         torch, _ = _torch_module_type()
         python_state = random.getstate()
         numpy_state = np.random.get_state()
         torch_state = torch.random.get_rng_state().clone()
+        # CUDA fits initialize their RNG before capturing it. CPU-only work
+        # must not initialize CUDA, but preserves it if a caller already did.
+        cuda_states = (
+            torch.cuda.get_rng_state_all()
+            if device == "cuda" or torch.cuda.is_initialized()
+            else None
+        )
         thread_count = int(torch.get_num_threads())
         try:
             torch.set_num_threads(1)
@@ -428,6 +465,8 @@ def deep_cpu_context(seed: int | None = None) -> Iterator[Any]:
             yield torch
         finally:
             torch.random.set_rng_state(torch_state)
+            if cuda_states is not None:
+                torch.cuda.set_rng_state_all(cuda_states)
             np.random.set_state(numpy_state)
             random.setstate(python_state)
             if int(torch.get_num_threads()) != thread_count:
@@ -466,9 +505,11 @@ def _deep_estimator(
         batch_size=int(params["batch_size"]),
         max_epochs=int(max_epochs),
         iterator_train__shuffle=True,
+        iterator_train__num_workers=0,
+        iterator_valid__num_workers=0,
         train_split=train_split,
         callbacks=callbacks,
-        device="cpu",
+        device=resolve_deep_device(model_id, params.get("device", "cpu")),
         verbose=0,
     )
 
@@ -558,7 +599,8 @@ def fit_deep_validation(
         lower_is_better=True,
     )
     net = None
-    with deep_cpu_context(seed):
+    device = resolve_deep_device(model_id, params.get("device", "cpu"))
+    with deep_cpu_context(seed, device=device):
         net = _deep_estimator(
             model_id,
             params,
@@ -604,7 +646,7 @@ def refit_deep_fixed_epochs(
     selected_epochs: int,
     class_count: int | None = None,
 ) -> Any:
-    """Fit a fresh CPU module/optimizer for fixed epochs without a validation split."""
+    """Fit a fresh module/optimizer for fixed epochs without a validation split."""
     if model_id not in DEEP_MODEL_IDS:
         raise ExtendedModelError(f"{model_id!r} is not a neural model")
     params = validate_extended_parameters(model_id, parameters)
@@ -618,7 +660,8 @@ def refit_deep_fixed_epochs(
     y_train = validate_deep_targets(model_id, train_y, class_count=class_count, name="refit targets")
     if len(x_train) != len(y_train):
         raise ExtendedModelError(f"{model_id} refit input and target row counts do not match")
-    with deep_cpu_context(seed):
+    device = resolve_deep_device(model_id, params.get("device", "cpu"))
+    with deep_cpu_context(seed, device=device):
         net = _deep_estimator(
             model_id,
             params,
@@ -648,10 +691,12 @@ def build_deep_from_state(
     input_size: int,
     output_size: int,
     state_dict: Mapping[str, Any],
+    device: str = "cpu",
 ) -> Any:
-    """Rebuild a CPU inference module without retaining a skorch optimizer."""
+    """Rebuild portable weights on an explicit device, defaulting to CPU."""
     params = validate_extended_parameters(model_id, parameters)
-    with deep_cpu_context():
+    selected_device = resolve_deep_device(model_id, device)
+    with deep_cpu_context(device=selected_device):
         _, module_type = _torch_module_type()
         module = module_type(
             architecture={"N01": "mlp", "N02": "mlp", "N04": "lstm", "N06": "gru"}[model_id],
@@ -666,12 +711,13 @@ def build_deep_from_state(
             for name, value in state_dict.items()
         }
         module.load_state_dict(converted, strict=True)
+        module.to(selected_device)
         module.eval()
     return module
 
 
 def predict_deep(estimator: Any, model_id: str, values: Any, *, class_count: int | None = None) -> np.ndarray:
-    """Predict with a skorch estimator or raw CPU module under the deep lock."""
+    """Predict on the fitted module's device and return CPU NumPy output."""
     inputs = validate_deep_inputs(model_id, values, name="inference inputs")
     with deep_cpu_context():
         module = getattr(estimator, "module_", None)
@@ -681,14 +727,16 @@ def predict_deep(estimator: Any, model_id: str, values: Any, *, class_count: int
             torch, _ = _torch_module_type()
             was_training = bool(module.training)
             module.eval()
-            with torch.no_grad():
-                result = module(torch.as_tensor(inputs, dtype=torch.float32, device="cpu")).detach().cpu().numpy()
-            if was_training:
-                module.train()
+            try:
+                device = next(module.parameters()).device
+                with torch.no_grad():
+                    result = module(torch.as_tensor(inputs, dtype=torch.float32, device=device)).detach().cpu().numpy()
+            finally:
+                module.train(was_training)
         elif callable(getattr(estimator, "predict", None)):
             result = np.asarray(estimator.predict(inputs))
         else:
-            raise ExtendedModelError("Deep estimator does not expose a fitted CPU module or predict method")
+            raise ExtendedModelError("Deep estimator does not expose a fitted module or predict method")
     if model_id == "N01":
         if result.ndim != 2 or result.shape[1] != class_count:
             if result.ndim == 1 and len(result) == len(inputs):

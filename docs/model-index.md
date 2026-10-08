@@ -1,6 +1,6 @@
-# 模型与参数索引（78 个活动条目）
+# 模型与参数索引（84 个活动条目）
 
-下方传统 estimator 表格列出 model_catalog.json 中的 71 个活动 scikit-learn 条目；HMM/deep 扩展模型在表后单独列出。合计 78 个可运行模型。传统模型的任务名称、estimator 完全限定名、任务限制和官方 API 链接取自目录；新样本能力和参数默认值由锁定环境中的实际 estimator 计算。传统模型共同上游为 scikit-learn 1.9.1（BSD-3-Clause）；来源与许可证见[第三方组件说明](third-party.md)。
+下方传统 estimator 表格列出 model_catalog.json 中的 71 个活动 scikit-learn 条目；表后列出 6 个需要独立可选 extra 的提升树模型，以及 7 个 HMM/deep 扩展模型，合计 84 个可运行模型。传统模型的任务名称、estimator 完全限定名、任务限制和官方 API 链接取自目录；scikit-learn 参数默认值由锁定环境中的实际 estimator 计算。提升树库未安装时，界面不显示其动态参数；安装对应 extra 后，参数默认值由该锁定库的实际 estimator 暴露。传统模型共同上游为 scikit-learn 1.9.1（BSD-3-Clause）；来源与许可证见[第三方组件说明](third-party.md)。
 
 参数列按 parameter_schema(model_id) 的 estimator 默认值生成，格式为“参数=默认值 (类型)”。这不是对任意参数组合的兼容性保证；不同值仍受 scikit-learn 约束。新样本能力列只列实际实例支持的方法；LOF 的 novelty、SVC 的 probability 会改变能力，见“关键限制”。聚类和降维训练阶段方法不等于支持对新行执行 predict 或 transform。
 
@@ -78,12 +78,25 @@
 | A03 | 异常检测 | `sklearn.neighbors.LocalOutlierFactor` | — | `algorithm`=auto (str); `contamination`=auto (str); `leaf_size`=30 (int); `metric`=minkowski (str); `metric_params`=None (optional); `n_jobs`=1 (int); `n_neighbors`=20 (int); `novelty`=False (bool); `p`=2 (int) | Default novelty=False is for fitted training samples; novelty mode must be explicitly selected for unseen samples. | [API](<https://scikit-learn.org/stable/modules/generated/sklearn.neighbors.LocalOutlierFactor.html>) |
 | A04 | 异常检测 | `sklearn.covariance.EllipticEnvelope` | `predict`, `decision_function`, `score_samples` | `assume_centered`=False (bool); `contamination`=0.1 (float); `random_state`=42 (int); `store_precision`=True (bool); `support_fraction`=None (optional) | Assumes approximately Gaussian/elliptical inlier distribution. | [API](<https://scikit-learn.org/stable/modules/generated/sklearn.covariance.EllipticEnvelope.html>) |
 
+## 可选提升树模型
+
+以下模型分别由 `xgboost`、`lightgbm`、`catboost` extra 提供，不属于基础依赖或 PyInstaller `standard` / `full` profile。目录不导入这些库；未安装时模型保持不可用并提示对应 extra。应用构造器默认使用 CPU、将可识别的数值线程数设为 1，并把拆分 seed 映射到各库的随机种子参数。完整参数名和上游默认值会在安装 extra 后从实际 estimator 读取。
+
+| ID | 任务 | 上游 estimator | 新样本操作 | extra | 构造器约束 | 官方 API |
+|---|---|---|---|---|---|---|
+| C25 | 分类 | `xgboost.sklearn.XGBClassifier` | `predict`, `predict_proba` | `xgboost` | 将原始目标类别编码为连续整数并在预测时还原；默认 CPU、单线程。 | [API](https://xgboost.readthedocs.io/en/stable/python/python_api.html#xgboost.XGBClassifier) |
+| C26 | 分类 | `lightgbm.sklearn.LGBMClassifier` | `predict`, `predict_proba` | `lightgbm` | 默认 CPU、单线程。 | [API](https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMClassifier.html) |
+| C27 | 分类 | `catboost.CatBoostClassifier` | `predict`, `predict_proba` | `catboost` | 默认 CPU、单线程、静默输出且不写模型文件。 | [API](https://catboost.ai/en/docs/concepts/python-reference_catboostclassifier) |
+| R24 | 回归 | `xgboost.sklearn.XGBRegressor` | `predict` | `xgboost` | 默认 CPU、单线程。 | [API](https://xgboost.readthedocs.io/en/stable/python/python_api.html#xgboost.XGBRegressor) |
+| R25 | 回归 | `lightgbm.sklearn.LGBMRegressor` | `predict` | `lightgbm` | 默认 CPU、单线程。 | [API](https://lightgbm.readthedocs.io/en/stable/pythonapi/lightgbm.LGBMRegressor.html) |
+| R26 | 回归 | `catboost.CatBoostRegressor` | `predict` | `catboost` | 默认 CPU、单线程、静默输出且不写模型文件。 | [API](https://catboost.ai/en/docs/concepts/python-reference_catboostregressor) |
+
 ## 任务数量
 
 | 任务 | 条目数 | ID 前缀 |
 |---|---:|---|
-| 分类 | 25 | `C`, `N01` |
-| 回归 | 26 | `R`, `N02`, `N04`, `N06` |
+| 分类 | 28 | `C`, `N01` |
+| 回归 | 29 | `R`, `N02`, `N04`, `N06` |
 | 序列建模 | 3 | `H` |
 | 聚类 | 10 | `K` |
 | 降维 | 10 | `D` |

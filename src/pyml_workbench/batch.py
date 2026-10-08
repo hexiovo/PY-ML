@@ -22,7 +22,8 @@ from threadpoolctl import threadpool_limits
 
 from .config import ExperimentConfig
 from .catalog import get_model
-from .experiment import DatasetSnapshot, ExperimentError, _json_digest, _session_training_curves, _write_artifacts, build_extended_snapshot, build_snapshot, load_model
+from .experiment import DatasetSnapshot, ExperimentError, _canonical_config, _json_digest, _session_training_curves, _write_artifacts, build_extended_snapshot, build_snapshot, load_model
+from .checkpoints import CheckpointError, load_checkpoint
 from .history import BudgetExhausted, DispatchStopped, HistoryError, HistoryStore
 from .search import SearchResume, SearchResult, SearchSpec, TrialRecord, load_search_result as restore_search_result, search
 from .selection import (
@@ -368,15 +369,15 @@ class _ActiveClock:
 def _rebuild_resume(store: HistoryStore, job: dict[str, Any]) -> SearchResume | None:
     if not job.get("fingerprint"):
         return None
-    records: list[TrialRecord] = []
     trial_rows = store.list_trials(job["job_id"])
-    running_rows = [row for row in trial_rows if row["status"] == "running"]
+    unresolved_rows = [row for row in trial_rows if row["status"] in {"running", "proposed"}]
+    running_rows = [row for row in unresolved_rows if row["status"] == "running"]
     actual_fit_count = int(job["actual_fit_count"])
     persisted_fit_count = sum(int(row["actual_fit_count"]) for row in trial_rows)
-    if len(running_rows) > 1:
+    if len(unresolved_rows) > 1:
         raise BatchError(
-            "Cannot resume a search job with multiple running trial receipts; "
-            "one worker may fit only one trial at a time."
+            "Cannot resume a search job with multiple unresolved trial receipts; "
+            "one worker may own only one active proposal at a time."
         )
     if persisted_fit_count != actual_fit_count:
         raise BatchError(
@@ -387,37 +388,40 @@ def _rebuild_resume(store: HistoryStore, job: dict[str, Any]) -> SearchResume | 
         raise BatchError(
             "Cannot resume a running trial without exactly one persisted fit receipt."
         )
+    if int(job["proposal_count"]) != len(trial_rows):
+        raise BatchError(
+            "Cannot resume search job because its proposal counter does not match persisted trial receipts."
+        )
 
+    if running_rows:
+        try:
+            store.requeue_interrupted_trial(
+                job_id=job["job_id"],
+                trial_id=running_rows[0]["trial_id"],
+                reason="Worker stopped during a fit; rerun this proposal from its original parameters.",
+            )
+        except HistoryError as exc:
+            raise BatchError(f"Cannot safely requeue interrupted trial: {exc}") from exc
+        actual_fit_count -= 1
+        trial_rows = store.list_trials(job["job_id"])
+        persisted_fit_count = sum(int(row["actual_fit_count"]) for row in trial_rows)
+        if persisted_fit_count != actual_fit_count:
+            raise BatchError(
+                "Cannot resume search job because its aggregate fit counter does not "
+                f"match persisted trial receipts after recovery ({actual_fit_count} != {persisted_fit_count})."
+            )
+
+    records: list[TrialRecord] = []
     for row in trial_rows:
-        if row["status"] == "running":
-            raw = _load_json(row["result_json"] or "{}", "running trial")
-            raw.update(
-                status="failed",
-                # The per-trial SQLite count is only 0/1. The job counter is
-                # the globally ordered fit number and the running receipt is
-                # the most recently budgeted fit for this serial search job.
-                fit_index=actual_fit_count,
-                error="Worker stopped after the fit was budgeted; this fit remains consumed.",
-                duration_seconds=max(0.0, float(raw.get("duration_seconds", 0.0))),
-                test_evaluation_count=0,
-            )
-            store.finish_trial(
-                job_id=job["job_id"], trial_id=row["trial_id"], status="failed",
-                objective_value=raw.get("objective_value"), metrics=raw.get("metrics", {}),
-                result=raw, error=raw["error"], duration_seconds=raw["duration_seconds"],
-                cache_key=row["cache_key"],
-            )
-            row = store.get_trial(job["job_id"], row["trial_id"])
         raw = _load_json(row["result_json"] or "{}", "trial result")
         if row["status"] == "proposed":
-            # Preserve the proposal receipt/index without pretending an estimator
-            # fit happened. It is deliberately excluded from the persisted cache.
+            # Keep an unstarted/interrupted proposal so SearchEngine can retry
+            # this exact proposal without consuming another proposal slot.
             raw.update(
-                status="invalid",
+                status="proposed",
                 fit_index=None,
-                cache_key=None,
                 objective_value=None,
-                error=raw.get("error") or "Worker stopped before this proposal entered estimator.fit.",
+                error=None,
                 test_evaluation_count=0,
             )
         elif row["status"] == "succeeded":
@@ -431,6 +435,7 @@ def _rebuild_resume(store: HistoryStore, job: dict[str, Any]) -> SearchResume | 
             raw["status"] = row["status"]
         raw["test_evaluation_count"] = 0
         records.append(TrialRecord.from_dict(raw))
+    records.sort(key=lambda record: record.proposal_index)
     sequence_plan_receipt = None
     sequence_plan_manifest = None
     if job.get("sequence_plan_receipt_json"):
@@ -727,8 +732,61 @@ def run_search_jobs(
     run_id = store.begin_batch_run(max_workers)
     close_heartbeat = _lease_heartbeat(store, run_id)
 
+    def cancelled_outcome(job_id: str) -> dict[str, Any]:
+        return {
+            "job_id": job_id,
+            "status": "cancelled",
+            "diagnostic_errors": [],
+        }
+
+    def cancelled_before_dispatch(job_id: str) -> bool:
+        current = store.get_job(job_id)
+        return bool(
+            current is not None
+            and current.get("status") == "cancelled"
+            and load_search_result(history_path, job_id) is None
+        )
+
+    def failed_outcome(job_id: str, exc: Exception) -> dict[str, Any]:
+        try:
+            traceback_text = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+        except Exception:
+            traceback_text = f"{type(exc).__name__}: {exc}"
+        error_id = uuid.uuid4().hex
+        if error_handler is not None:
+            try:
+                logged = error_handler(
+                    exc,
+                    context={"stage": "batch_search", "job_id": job_id},
+                )
+                logged_id = getattr(logged, "error_id", None)
+                if isinstance(logged_id, str) and _ERROR_ID_RE.fullmatch(logged_id):
+                    error_id = logged_id
+            except Exception:
+                # Search failures remain reportable even when diagnostics are unavailable.
+                pass
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "error_id": error_id,
+            "traceback": traceback_text,
+            "diagnostic_errors": [
+                {
+                    "error_id": error_id,
+                    "error_type": type(exc).__name__,
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback_text,
+                }
+            ],
+        }
+
     def run_one(job_id: str) -> dict[str, Any]:
         try:
+            if cancelled_before_dispatch(job_id):
+                return cancelled_outcome(job_id)
             result = _run_search_job_impl(
                 history_path,
                 job_id,
@@ -757,41 +815,22 @@ def run_search_jobs(
                 "result": result.to_dict(),
                 "diagnostic_errors": diagnostic_errors,
             }
-        except Exception as exc:
+        except DispatchStopped as exc:
             try:
-                traceback_text = "".join(
-                    traceback.format_exception(type(exc), exc, exc.__traceback__)
-                )
+                current = store.get_job(job_id)
             except Exception:
-                traceback_text = f"{type(exc).__name__}: {exc}"
-            error_id = uuid.uuid4().hex
-            if error_handler is not None:
+                current = None
+            if current is not None and current.get("status") == "cancelled":
+                return cancelled_outcome(job_id)
+            return failed_outcome(job_id, exc)
+        except Exception as exc:
+            if isinstance(exc, BatchError):
                 try:
-                    logged = error_handler(
-                        exc,
-                        context={"stage": "batch_search", "job_id": job_id},
-                    )
-                    logged_id = getattr(logged, "error_id", None)
-                    if isinstance(logged_id, str) and _ERROR_ID_RE.fullmatch(logged_id):
-                        error_id = logged_id
+                    if cancelled_before_dispatch(job_id):
+                        return cancelled_outcome(job_id)
                 except Exception:
-                    # Search failures remain reportable even when diagnostics are unavailable.
                     pass
-            return {
-                "job_id": job_id,
-                "status": "failed",
-                "error": f"{type(exc).__name__}: {exc}",
-                "error_id": error_id,
-                "traceback": traceback_text,
-                "diagnostic_errors": [
-                    {
-                        "error_id": error_id,
-                        "error_type": type(exc).__name__,
-                        "message": f"{type(exc).__name__}: {exc}",
-                        "traceback": traceback_text,
-                    }
-                ],
-            }
+            return failed_outcome(job_id, exc)
 
     try:
         if max_workers == 1:
@@ -1173,14 +1212,95 @@ def export_training_exploration(
     }
 
 
+def _frozen_selection_recovery_identity(selection: FrozenSelection) -> dict[str, str]:
+    """Return the frozen identities a safe batch shutdown marker must bind."""
+    if not isinstance(selection, FrozenSelection):
+        raise BatchError("Stored frozen selection has an unexpected type")
+    selection.verify()
+    snapshot = selection.snapshot.to_dict()
+    manifest = selection.snapshot.manifest
+    return {
+        "selection_sha256": selection.selection_sha256,
+        "config_sha256": _canonical_config(selection.config)[1],
+        "snapshot_sha256": _json_digest(snapshot),
+        "source_sha256": manifest["source_sha256"],
+        "data_sha256": manifest["data_sha256"],
+        "split_sha256": manifest["split_sha256"],
+    }
+
+
+def _validate_batch_recovery_checkpoint(
+    checkpoint_path: str | Path | None,
+    *,
+    history_path: str | Path,
+    job_id: str,
+    job: dict[str, Any],
+    selection: FrozenSelection,
+    permission: dict[str, Any],
+    final_session_path: Path,
+    interrupted: Any,
+) -> None:
+    if checkpoint_path is None:
+        raise BatchError("Safe final-test recovery requires its saved shutdown checkpoint")
+    try:
+        checkpoint = load_checkpoint(checkpoint_path, scope="batch-plan")
+    except (CheckpointError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise BatchError(f"Safe final-test recovery checkpoint is invalid: {exc}") from exc
+    marker = checkpoint.get("safe_interruption") if checkpoint is not None else None
+    if not isinstance(marker, dict):
+        raise BatchError("Safe final-test recovery checkpoint has no shutdown marker")
+    try:
+        identity = _frozen_selection_recovery_identity(selection)
+    except Exception as exc:
+        raise BatchError(f"Frozen selection cannot be verified for safe recovery: {exc}") from exc
+    history_identity = str(Path(history_path).expanduser().resolve())
+    expected = {
+        "action": "batch-finalize",
+        "worker_stopped": True,
+        "complete_receipt": False,
+        "history_path": history_identity,
+        "job_id": job_id,
+        "final_session_id": permission.get("final_session_id"),
+        **identity,
+    }
+    if (
+        marker.get("worker_stopped") is not True
+        or marker.get("complete_receipt") is not False
+        or any(marker.get(key) != value for key, value in expected.items())
+    ):
+        raise BatchError("Safe final-test recovery checkpoint does not match this job and frozen selection")
+    split_summary = _load_json(job.get("split_json"), "queued split summary")
+    if (
+        job.get("dataset_id") != identity["source_sha256"]
+        or job.get("snapshot_sha256") != identity["snapshot_sha256"]
+        or not isinstance(split_summary, dict)
+        or split_summary.get("seed") != selection.config.split.seed
+        or split_summary.get("split_sha256") != identity["split_sha256"]
+        or split_summary.get("positions") != selection.snapshot.manifest.get("split_positions")
+        or not isinstance(interrupted, dict)
+        or interrupted.get("session_path") != str(final_session_path)
+        or interrupted.get("state") != "testing"
+        or interrupted.get("session_id") != permission.get("final_session_id")
+        or interrupted.get("selection_sha256") != selection.selection_sha256
+        or interrupted.get("selection") != selection.to_dict()
+    ):
+        raise BatchError("Safe final-test recovery does not match the durable job/session identities")
+
+
 def finalize_frozen_search(
     history_path: str | Path,
     job_id: str,
     *,
     output_dir: str | Path | None = None,
     on_event=None,
+    allow_interrupted_test: bool = False,
+    safe_interruption_checkpoint: str | Path | None = None,
 ) -> FinalSelection:
     """Refit the explicitly frozen winner, then claim and consume the one test."""
+    if type(allow_interrupted_test) is not bool:
+        raise BatchError("allow_interrupted_test must be an explicit boolean")
+    if safe_interruption_checkpoint is not None and not allow_interrupted_test:
+        raise BatchError("A recovery checkpoint is only valid for an explicitly approved safe retry")
     store = HistoryStore(history_path)
     job = store.get_job(job_id)
     if job is None:
@@ -1193,10 +1313,41 @@ def finalize_frozen_search(
     if not isinstance(selection, FrozenSelection):
         raise BatchError("Stored frozen selection has an unexpected type")
     selection.verify()
+    if selection.job_id != job_id:
+        raise BatchError("Stored frozen selection belongs to another batch job")
     if selection.metadata.get("objective", {}).get("split") != "validation":
         raise BatchError("Only an independent-validation winner can be finalized")
     final_session_path = artifact_dir / "final-session.joblib"
     consumed_session_id: str | None = None
+    safe_retry_session_id: str | None = None
+
+    if allow_interrupted_test:
+        permission = store.get_test_permission(job_id)
+        if (
+            permission is None
+            or permission.get("state") != "consumed"
+            or permission.get("finished_at") is not None
+            or permission.get("result_json") is not None
+            or permission.get("error_text") is not None
+            or not permission.get("final_session_id")
+        ):
+            raise BatchError(
+                "Safe final-test recovery requires one consumed permission with no completion or error receipt"
+            )
+        if not final_session_path.is_file():
+            raise BatchError("Safe final-test recovery is missing its durable session")
+        interrupted = joblib.load(final_session_path)
+        _validate_batch_recovery_checkpoint(
+            safe_interruption_checkpoint,
+            history_path=history_path,
+            job_id=job_id,
+            job=job,
+            selection=selection,
+            permission=permission,
+            final_session_path=final_session_path,
+            interrupted=interrupted,
+        )
+        safe_retry_session_id = permission["final_session_id"]
 
     def on_selection_event(event: dict[str, Any]) -> None:
         nonlocal consumed_session_id
@@ -1206,7 +1357,19 @@ def finalize_frozen_search(
         if name == "test_started":
             if not final_run_id:
                 raise HistoryError("Final test event is missing its final-session identity")
-            store.consume_test_permission(job_id=job_id, final_session_id=final_run_id)
+            if safe_retry_session_id == final_run_id:
+                permission = store.get_test_permission(job_id)
+                if (
+                    permission is None
+                    or permission.get("state") != "consumed"
+                    or permission.get("final_session_id") != final_run_id
+                    or permission.get("finished_at") is not None
+                    or permission.get("result_json") is not None
+                    or permission.get("error_text") is not None
+                ):
+                    raise HistoryError("The interrupted test permission is no longer recoverable")
+            else:
+                store.consume_test_permission(job_id=job_id, final_session_id=final_run_id)
             consumed_session_id = final_run_id
         elif name == "test_completed":
             result_payload = data.get("result")
@@ -1218,7 +1381,28 @@ def finalize_frozen_search(
             on_event(event)
 
     try:
-        result = finalize_selected(selection, session_path=final_session_path, on_event=on_selection_event)
+        result = finalize_selected(
+            selection,
+            session_path=final_session_path,
+            on_event=on_selection_event,
+            allow_interrupted_test=allow_interrupted_test,
+        )
+        permission = store.get_test_permission(job_id)
+        if (
+            result.state == "tested"
+            and permission is not None
+            and permission["state"] == "consumed"
+            and permission["final_session_id"] == result.final_run_id
+        ):
+            # The final-session envelope is the durable test checkpoint. If the
+            # process stopped after it reached "tested" but before the SQLite
+            # finish receipt was committed, repair that receipt from the cached
+            # result without evaluating test data again.
+            store.finish_test(
+                job_id=job_id,
+                final_session_id=result.final_run_id,
+                result=result.to_dict(),
+            )
         if result.session.test_evaluation_count not in {0, 1}:
             raise ExperimentError("Final selection has an invalid test evaluation count")
         if output_dir is not None:

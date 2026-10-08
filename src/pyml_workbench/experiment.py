@@ -25,6 +25,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 from sklearn.manifold import trustworthiness
+from sklearn.svm import NuSVC, SVC
 
 from .adapters import UnsupportedOperationError
 from .catalog import build_estimator, get_model, list_models, model_capabilities
@@ -79,6 +80,8 @@ class ExperimentSession:
     frozen: bool = False
     snapshot_manifest: dict[str, Any] = field(default_factory=dict)
     fit_scope: str = "train"
+    plot_scores: dict[str, dict[str, Any]] = field(default_factory=dict)
+    plot_explanations: dict[str, Any] = field(default_factory=dict)
 
 
 def _json_digest(value: Any) -> str:
@@ -343,7 +346,12 @@ class FittedModel:
         return getattr(self.estimator, operation)(transformed)
 
     def predict(self, values: Any):
-        return self._invoke("predict", values)
+        prediction = self._invoke("predict", values)
+        if self.task == "classification":
+            array = np.asarray(prediction)
+            if array.ndim == 2 and array.shape[1] == 1:
+                return array[:, 0]
+        return prediction
 
     def predict_proba(self, values: Any):
         return self._invoke("predict_proba", values)
@@ -544,6 +552,166 @@ def _result_rows(split: str, row_positions, source_index, actual=None, predicted
                 row[f"component_{component}"] = float(value)
         rows.append(row)
     return rows
+
+
+def _plot_scalar(value: Any) -> Any:
+    """Convert a fitted class label to a stable scalar cache value."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and np.isfinite(value):
+        return value
+    raise ValueError(f"unsupported class label type {type(value).__name__}")
+
+
+def _classification_score_cache(estimator, values, row_positions) -> dict[str, Any]:
+    """Capture genuine class-aligned estimator scores without relabeling margins."""
+    positions = [int(value) for value in np.asarray(row_positions, dtype=np.int64)]
+    try:
+        classes = [_plot_scalar(value) for value in np.asarray(estimator.classes_).reshape(-1)]
+    except Exception as exc:
+        return {"available": False, "row_positions": positions, "reason": f"拟合估计器没有可验证的 classes_：{exc}"}
+    if len(classes) < 2 or len(set((type(value), value) for value in classes)) != len(classes):
+        return {"available": False, "row_positions": positions, "class_order": classes, "reason": "拟合类别顺序缺失、重复或不足两个类别。"}
+
+    probability_error = None
+    predict_proba = getattr(estimator, "predict_proba", None)
+    if callable(predict_proba):
+        try:
+            raw = np.asarray(predict_proba(values), dtype=np.float64)
+            if raw.ndim != 2 or raw.shape != (len(positions), len(classes)):
+                raise ValueError("概率矩阵的行数或类别列数与 classes_ 不匹配")
+            if not np.isfinite(raw).all() or (raw < -1e-8).any() or (raw > 1 + 1e-8).any():
+                raise ValueError("概率输出包含非有限值或超出 [0, 1] 的值")
+            return {
+                "available": True,
+                "row_positions": positions,
+                "class_order": classes,
+                "score_type": "probability",
+                "semantics": "one_column_per_class",
+                "score_column_map": [
+                    {"column_index": index, "class_label": label}
+                    for index, label in enumerate(classes)
+                ],
+                "values": raw.tolist(),
+            }
+        except Exception as exc:
+            probability_error = f"predict_proba 不可用：{type(exc).__name__}: {exc}"
+
+    decision = getattr(estimator, "decision_function", None)
+    if callable(decision):
+        try:
+            raw = np.asarray(decision(values), dtype=np.float64)
+            if not np.isfinite(raw).all():
+                raise ValueError("decision_function 包含非有限值")
+            if len(classes) == 2 and raw.ndim == 1 and raw.shape == (len(positions),):
+                return {
+                    "available": True,
+                    "row_positions": positions,
+                    "class_order": classes,
+                    "score_type": "decision_score",
+                    "semantics": "binary_positive_class_margin",
+                    "score_column_map": [{"column_index": 0, "class_label": classes[1]}],
+                    "values": raw.reshape(-1, 1).tolist(),
+                }
+            if len(classes) == 2 and raw.ndim == 2 and raw.shape == (len(positions), 1):
+                matrix = raw
+                semantics = "binary_positive_class_margin"
+                column_map = [{"column_index": 0, "class_label": classes[1]}]
+            elif raw.ndim == 2 and raw.shape == (len(positions), len(classes)):
+                base = getattr(estimator, "estimator", estimator)
+                decision_shape = getattr(base, "decision_function_shape", None)
+                known_ovr = type(base).__name__ in {
+                    "LinearSVC", "SGDClassifier", "LogisticRegression", "RidgeClassifier",
+                    "Perceptron", "PassiveAggressiveClassifier", "LinearDiscriminantAnalysis",
+                    "QuadraticDiscriminantAnalysis",
+                }
+                if decision_shape != "ovr" and not known_ovr:
+                    raise ValueError("多分类 decision_function 的 OvR/OvO 语义无法确认")
+                matrix = raw
+                semantics = "multiclass_one_vs_rest"
+                column_map = [
+                    {"column_index": index, "class_label": label}
+                    for index, label in enumerate(classes)
+                ]
+            else:
+                raise ValueError("decision_function 的形状与二分类 margin 或已确认的多分类 OvR 不匹配")
+            return {
+                "available": True,
+                "row_positions": positions,
+                "class_order": classes,
+                "score_type": "decision_score",
+                "semantics": semantics,
+                "score_column_map": column_map,
+                "values": matrix.tolist(),
+            }
+        except Exception as exc:
+            decision_error = f"decision_function 不可用：{type(exc).__name__}: {exc}"
+    else:
+        decision_error = "估计器没有 decision_function。"
+    reasons = [item for item in (probability_error, decision_error) if item]
+    return {
+        "available": False,
+        "row_positions": positions,
+        "class_order": classes,
+        "reason": "；".join(reasons) or "估计器没有可用的类别分数输出。",
+    }
+
+
+def _classification_explanation_cache(
+    estimator, preprocessor, *, task: str = "classification", output_label: str | None = None,
+) -> dict[str, Any]:
+    """Copy native feature importance or coefficients with transformed feature names."""
+    try:
+        feature_names = [_plot_scalar(value) for value in preprocessor.get_feature_names_out()]
+    except Exception as exc:
+        return {"available": False, "reason": f"无法从拟合预处理器取得变换后特征名：{exc}"}
+    try:
+        classes = [_plot_scalar(value) for value in np.asarray(estimator.classes_).reshape(-1)]
+    except Exception:
+        classes = []
+    importance = getattr(estimator, "feature_importances_", None)
+    if importance is not None:
+        values = np.asarray(importance, dtype=np.float64)
+        if values.ndim != 1 or values.shape[0] != len(feature_names) or not np.isfinite(values).all():
+            return {"available": False, "reason": "feature_importances_ 与实际变换后特征维数不匹配。"}
+        return {
+            "available": True,
+            "kind": "feature_importance",
+            "feature_names": [str(value) for value in feature_names],
+            "class_labels": ["特征重要性"],
+            "values": [values.tolist()],
+        }
+    coefficients = getattr(estimator, "coef_", None)
+    if coefficients is not None:
+        values = np.asarray(coefficients, dtype=np.float64)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        if values.ndim != 2 or values.shape[1] != len(feature_names) or not np.isfinite(values).all():
+            return {"available": False, "reason": "coef_ 与实际变换后特征维数不匹配。"}
+        base_estimator = getattr(estimator, "estimator", estimator)
+        if task == "classification" and len(classes) > 2 and isinstance(base_estimator, (SVC, NuSVC)):
+            return {
+                "available": False,
+                "reason": "多分类 SVC/NuSVC 的 coef_ 表示类别对之间的系数，不能按单一类别解释。",
+            }
+        if task == "regression" and values.shape[0] == 1:
+            class_labels = [str(output_label) if output_label else "回归目标"]
+        elif values.shape[0] == 1 and len(classes) == 2:
+            class_labels = [classes[1]]
+        elif values.shape[0] == len(classes):
+            class_labels = classes
+        else:
+            return {"available": False, "reason": "coef_ 行数无法与拟合类别顺序一一对应。"}
+        return {
+            "available": True,
+            "kind": "coefficient",
+            "feature_names": [str(value) for value in feature_names],
+            "class_labels": class_labels,
+            "values": values.tolist(),
+        }
+    return {"available": False, "reason": "此估计器没有原生 feature_importances_ 或 coef_。"}
 
 
 def _session_training_curves(session: ExperimentSession) -> dict[str, Any] | None:
@@ -928,6 +1096,23 @@ def prepare_experiment(
         events = [item for item in events if item != "validation_metrics_computed"]
         record_event("refit_train_validation_only")
 
+    plot_scores: dict[str, dict[str, Any]] = {}
+    plot_explanations: dict[str, Any] = {}
+    if config.task == "classification":
+        score_partition = "refit" if _fit_scope == "train_validation" else "train"
+        plot_scores[score_partition] = _classification_score_cache(estimator, x_train_ready, train_idx)
+        if len(validation_idx):
+            plot_scores["validation"] = _classification_score_cache(
+                estimator, x_validation_ready, validation_idx
+            )
+    if config.task in {"classification", "regression"}:
+        plot_explanations = _classification_explanation_cache(
+            estimator,
+            preprocessor,
+            task=config.task,
+            output_label=getattr(config.dataset, "target_column", None),
+        )
+
     return ExperimentSession(
         config=config,
         frozen_config=frozen_config,
@@ -943,6 +1128,8 @@ def prepare_experiment(
         test_evaluation_count=test_evaluation_count,
         snapshot_manifest=snapshot.to_dict() if snapshot is not None else {},
         fit_scope=_fit_scope,
+        plot_scores=plot_scores,
+        plot_explanations=plot_explanations,
     )
 
 
@@ -1045,6 +1232,10 @@ def _evaluate_test_once(
         metric_fn = _classification_metrics if config.task == "classification" else _regression_metrics
         metrics["test"] = metric_fn(y_test.to_numpy(), test_prediction)
         rows.extend(_result_rows("test", test_idx, features.index[test_idx], y_test.to_numpy(), test_prediction))
+        if config.task == "classification":
+            session.plot_scores["test"] = _classification_score_cache(
+                estimator, x_test_ready, test_idx
+            )
         session.test_evaluation_count = 1
         record_event("test_metrics_computed_once")
     elif config.task == "clustering":

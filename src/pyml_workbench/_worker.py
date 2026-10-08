@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager, redirect_stdout
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from pyml_workbench.config import ExperimentConfig
+from pyml_workbench.checkpoints import load_checkpoint
 from pyml_workbench.diagnostics import LogSession
 from pyml_workbench.batch import (
     create_search_jobs,
@@ -35,6 +37,7 @@ from pyml_workbench.data import load_dataset
 from pyml_workbench.experiment import (
     ExperimentSession, _canonical_config, _session_training_curves, _write_artifacts, evaluate_test,
     freeze_experiment, load_model, prepare_experiment,
+    build_snapshot, build_extended_snapshot,
 )
 from pyml_workbench.plot_cache import (
     _verify_session_plot_cache_manifest,
@@ -65,16 +68,86 @@ def _config(path: Path) -> ExperimentConfig:
 def _session_lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = path.with_name(path.name + ".lock")
-    try:
-        descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise SessionError("Session is busy or has an interrupted worker lock; do not start another action") from exc
+    for attempt in range(2):
+        try:
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError as exc:
+            try:
+                owner = lock.read_text(encoding="ascii")
+                pid = int(owner)
+                if pid <= 0 or _pid_alive(pid):
+                    raise SessionError("Session is busy; its worker has not stopped")
+                if attempt or lock.read_text(encoding="ascii") != owner:
+                    raise SessionError("Session lock changed during recovery")
+                lock.unlink()
+            except (OSError, ValueError) as lock_error:
+                raise SessionError("Cannot verify the interrupted session lock") from lock_error
     try:
         os.write(descriptor, str(os.getpid()).encode("ascii"))
         os.close(descriptor)
         yield
     finally:
         lock.unlink(missing_ok=True)
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            if ctypes.get_last_error() == 87:
+                return False
+            raise SessionError("Cannot determine whether the session worker has stopped")
+        try:
+            code = wintypes.DWORD()
+            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+                raise SessionError("Cannot read session worker status")
+            return code.value == 259
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _input_fingerprint(session: ExperimentSession) -> dict[str, str]:
+    fingerprint = {key: session.snapshot_manifest.get(key) for key in
+                   ("source_sha256", "data_sha256", "split_sha256")}
+    if any(not isinstance(value, str) or len(value) != 64
+           or any(char not in "0123456789abcdef" for char in value)
+           for value in fingerprint.values()):
+        raise SessionError("Saved session has no valid input data/split fingerprint")
+    return fingerprint
+
+
+def _validate_safe_test_checkpoint(args, envelope: dict[str, Any]) -> None:
+    checkpoint_path = getattr(args, "recovery_checkpoint", None)
+    if checkpoint_path is None:
+        raise SessionError("Safe-test recovery requires its saved shutdown checkpoint")
+    checkpoint = load_checkpoint(checkpoint_path, scope="single-session")
+    marker = checkpoint.get("safe_interruption") if checkpoint else None
+    binding = {"session_id": envelope["session_id"],
+               "session_path": envelope["session_path"],
+               "config_sha256": envelope["frozen_config_sha256"],
+               "input_fingerprint": _input_fingerprint(envelope["session"])}
+    if (not isinstance(marker, dict) or marker.get("action") != "test"
+            or marker.get("worker_stopped") is not True
+            or marker.get("complete_receipt") is not False
+            or checkpoint.get("state") != "testing"
+            or any(checkpoint.get(key) != value or marker.get(key) != value
+                   for key, value in binding.items())):
+        raise SessionError("Safe-test recovery checkpoint does not bind this frozen session")
 
 
 def _save(path: Path, envelope: dict[str, Any]) -> None:
@@ -85,6 +158,7 @@ def _save(path: Path, envelope: dict[str, Any]) -> None:
         envelope["plot_cache_manifest"] = build_session_plot_cache_manifest(
             envelope.get("session")
         )
+    path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     os.close(descriptor)
     try:
@@ -96,7 +170,13 @@ def _save(path: Path, envelope: dict[str, Any]) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def _load(path: Path, expected_id: str, config: ExperimentConfig) -> dict[str, Any]:
+def _load(
+    path: Path,
+    expected_id: str,
+    config: ExperimentConfig,
+    *,
+    allow_interrupted_test: bool = False,
+) -> dict[str, Any]:
     value = joblib.load(path)
     if not isinstance(value, dict) or value.get("kind") != "pyml-workbench-internal-session" or value.get("schema_version") != 1:
         raise SessionError("File is not an internal fitted session")
@@ -112,9 +192,23 @@ def _load(path: Path, expected_id: str, config: ExperimentConfig) -> dict[str, A
             or session.fitted_model.frozen_config_sha256 != digest
             or _canonical_config(config)[1] != digest):
         raise SessionError("Configuration changed since training; discard this session and retrain")
+    source = Path(session.source_path)
+    expected_source = session.snapshot_manifest.get("source_sha256")
+    try:
+        observed_source = hashlib.sha256(source.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise SessionError(f"Training source is unavailable; this saved session cannot be resumed: {exc}") from exc
+    if not isinstance(expected_source, str) or observed_source != expected_source:
+        raise SessionError("Training source changed since this session; discard it and retrain")
     state = value.get("state")
-    if state not in {"trained", "frozen", "testing", "tested", "test_failed"}:
+    if state not in {"trained", "frozen", "testing", "tested", "test_failed", "test_cancelled"}:
         raise SessionError("Session state is invalid")
+    if state == "testing" and not allow_interrupted_test:
+        raise SessionError("Final test was interrupted without an explicit safe-shutdown recovery")
+    if state == "testing" and (not session.frozen or session.finalized
+            or session.result is not None or session.test_evaluation_count != 0
+            or "test" in session.metrics):
+        raise SessionError("Interrupted test is not an untouched frozen checkpoint")
     if state == "trained" and (session.frozen or session.finalized or session.result is not None or "test" in session.metrics):
         raise SessionError("Unfrozen session contains final-test state")
     if state in {"frozen", "tested"} and not session.frozen:
@@ -136,15 +230,20 @@ def _load(path: Path, expected_id: str, config: ExperimentConfig) -> dict[str, A
 def _summary(envelope: dict[str, Any]) -> dict[str, Any]:
     session = envelope["session"]
     sequence_summary = sequence_plan_summary(getattr(session, "sequence_plan", None))
+    failed_test = envelope["state"] in {"test_failed", "test_cancelled"}
     return {
         "session_path": envelope["session_path"], "state": envelope["state"],
-        "metrics": session.metrics, "events": list(session.events),
+        "metrics": ({key: value for key, value in session.metrics.items()
+                     if key in {"train", "validation", "selection"}}
+                    if failed_test else session.metrics),
+        "events": [event for event in session.events if not failed_test or not event.startswith("test_")],
         "training_curves": _session_training_curves(session),
         "sequence_summary": sequence_summary,
         "frozen_config_sha256": session.frozen_config_sha256,
+        "input_fingerprint": _input_fingerprint(session),
         "capabilities": session.fitted_model.capabilities,
-        "test_evaluation_count": session.test_evaluation_count,
-        "audit": session.result.audit if session.result is not None else None,
+        "test_evaluation_count": 0 if failed_test else session.test_evaluation_count,
+        "audit": session.result.audit if session.result is not None and not failed_test else None,
     }
 
 
@@ -159,7 +258,13 @@ def _session_action(args, context: dict[str, Any]) -> None:
             if path == Path(config.dataset.source_path).expanduser().resolve():
                 raise SessionError("Session path cannot replace the input dataset")
             _emit(context, "progress", name="preparing")
-            session = prepare_experiment(config, on_event=callback)
+            if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
+                snapshot, sequence_plan = build_extended_snapshot(config)
+            else:
+                snapshot, sequence_plan = build_snapshot(config), None
+            session = prepare_experiment(config, on_event=callback, snapshot=snapshot,
+                                         sequence_plan=sequence_plan)
+            context["session_id"] = args.session_id or context["session_id"] or uuid.uuid4().hex
             envelope = {
                 "kind": "pyml-workbench-internal-session", "schema_version": 1,
                 "session_id": context["session_id"], "session_path": str(path),
@@ -169,11 +274,22 @@ def _session_action(args, context: dict[str, Any]) -> None:
             _save(path, envelope)
             _emit(context, "result", **_summary(envelope), cached=False)
             return
-        envelope = _load(path, args.session_id, config)
+        allow_interrupted_test = bool(getattr(args, "allow_safe_interrupted_test", False))
+        envelope = _load(
+            path,
+            args.session_id,
+            config,
+            allow_interrupted_test=allow_interrupted_test,
+        )
         session = envelope["session"]
         state = envelope["state"]
-        if state in {"testing", "test_failed"}:
-            raise SessionError("Final test was interrupted or failed; this session cannot be tested or relabelled again")
+        if state == "testing" and allow_interrupted_test:
+            _validate_safe_test_checkpoint(args, envelope)
+        if args.action == "restore":
+            _emit(context, "result", **_summary(envelope), cached=state == "tested")
+            return
+        if state in {"test_failed", "test_cancelled"}:
+            raise SessionError("Final test failed or was cancelled; this session cannot be tested or relabelled again")
         if args.action == "freeze":
             freeze_experiment(session, config)
             if state == "trained":
@@ -183,6 +299,14 @@ def _session_action(args, context: dict[str, Any]) -> None:
         elif args.action == "test":
             if state == "trained":
                 raise SessionError("Freeze this fitted session before final test")
+            if state == "testing":
+                if not allow_interrupted_test:
+                    raise SessionError("Only an explicitly confirmed safe shutdown may resume this final test")
+                if not session.frozen or session.finalized or session.result is not None or session.test_evaluation_count != 0:
+                    raise SessionError("Interrupted final-test checkpoint is inconsistent and cannot be retried")
+                envelope["state"] = "frozen"
+                _save(path, envelope)
+                state = "frozen"
             cached = state == "tested"
             if not cached:
                 # Persist consumption before test access: a killed process cannot
@@ -279,7 +403,10 @@ def _batch_summary(outcome: dict[str, Any]) -> dict[str, Any]:
         "elapsed_seconds": result.get("elapsed_seconds"),
         "winner_trial_id": winner.get("trial_id"),
         "winner_value": winner.get("objective_value"),
+        "winner_metrics": winner.get("metrics", {}),
         "winner_parameters": winner.get("parameters"),
+        "task": (outcome.get("result") or {}).get("config", {}).get("task"),
+        "model_id": (outcome.get("result") or {}).get("config", {}).get("model_id"),
         "winner_training_curves": winner.get("training_curves"),
         "sequence_summary": result.get("sequence_plan_summary"),
     }
@@ -364,11 +491,15 @@ def _batch_action(
         _emit(context, "result", phase="training_exploration_exported", result=result)
         return
     if args.action == "batch-finalize":
+        if getattr(args, "allow_safe_interrupted_test", False) and getattr(args, "recovery_checkpoint", None) is None:
+            raise SessionError("Safe batch-test recovery requires its saved shutdown checkpoint")
         result = finalize_frozen_search(
             args.history,
             args.job_id,
             output_dir=args.output,
             on_event=lambda event: _batch_emit(context, event),
+            allow_interrupted_test=bool(getattr(args, "allow_safe_interrupted_test", False)),
+            safe_interruption_checkpoint=getattr(args, "recovery_checkpoint", None),
         )
         _emit(context, "result", phase="finalized", job_id=args.job_id,
               final_selection=result.to_dict())
@@ -406,12 +537,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         parser = _Parser(description="pyml-workbench QProcess worker")
         subparsers = parser.add_subparsers(dest="action", required=True)
-        for action in ("train", "freeze", "test", "export"):
+        for action in ("train", "freeze", "test", "export", "restore"):
             child = subparsers.add_parser(action)
             child.add_argument("--config", required=True, type=Path)
             child.add_argument("--session", required=True, type=Path)
             if action != "train":
                 child.add_argument("--session-id", required=True)
+            else:
+                child.add_argument("--session-id", default=None)
+            if action in {"test", "restore"}:
+                child.add_argument("--allow-safe-interrupted-test", action="store_true")
+                child.add_argument("--recovery-checkpoint", type=Path)
             if action == "export":
                 child.add_argument("--output", required=True, type=Path)
         child = subparsers.add_parser("inference")
@@ -442,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
         child.add_argument("--history", required=True, type=Path)
         child.add_argument("--job-id", required=True)
         child.add_argument("--output", type=Path, default=None)
+        child.add_argument("--allow-safe-interrupted-test", action="store_true")
+        child.add_argument("--recovery-checkpoint", type=Path)
         child = subparsers.add_parser("batch-control")
         child.add_argument("--history", required=True, type=Path)
         child.add_argument("--job-id", required=True)
@@ -450,9 +588,9 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(raw)
         context.update(action=args.action, operation=getattr(args, "operation", args.action), session_id=getattr(args, "session_id", None))
         if args.action == "train":
-            context["session_id"] = str(uuid.uuid4())
+            context["session_id"] = args.session_id or uuid.uuid4().hex
         with redirect_stdout(sys.stderr):
-            if args.action in {"train", "freeze", "test", "export"}:
+            if args.action in {"train", "freeze", "test", "export", "restore"}:
                 _session_action(args, context)
             elif args.action.startswith("batch-"):
                 _batch_action(args, context, log_session=log_session)

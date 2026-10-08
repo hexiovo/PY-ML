@@ -1,0 +1,27 @@
+{
+  "version": "0.4.4",
+  "PDF": "F:\\桌面\\程序\\PY-ML\\output\\pdf\\PYML-Workbench-0.4.4-图文指南.pdf",
+  "pages": 36,
+  "chapters": 13,
+  "screenshots": 19,
+  "manifest_screenshots": 19,
+  "bytes": 2542911,
+  "sha256": "e8b3f1d78cef37fb620dcdfc8855486500de5742a1aaf9c2fc2dd20ace7ee5f7",
+  "source_sha256": "1b368a0923ac068db6855fd9bfe58b26477eea61c492a07ad76e8e995b108d7d",
+  "text_and_bookmark_checks": "PASS",
+  "directory_links": 26,
+  "linked_chapters": 13,
+  "image_pages": 19,
+  "screenshot_source": "Mixed Qt captures; earlier verified screenshots were retained and changed wizard screens refreshed. See each screenshot source_kind for provenance.",
+  "data_source": "Deterministic synthetic data, no user data",
+  "embedded_fonts": {
+    "/AAAAAA+MicrosoftYaHei-0": true,
+    "/AAAAAB+MicrosoftYaHei-0": true,
+    "/AAAAAC+MicrosoftYaHei-0": true,
+    "/AAAAAA+MicrosoftYaHei-Bold-0": true,
+    "/AAAAAB+MicrosoftYaHei-Bold-0": true
+  },
+  "screenshot_manifest_sha256": "a570cf130055e8dd429360e1f2b41f9e7347935ae8f8d77e8cb2739e5526a46f",
+  "portrait_pages": 32,
+  "landscape_pages": 4
+}

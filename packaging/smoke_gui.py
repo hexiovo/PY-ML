@@ -96,10 +96,10 @@ def main():
                 while time.monotonic() < deadline and process.poll() is None:
                     windows.clear()
                     user32.EnumWindows(inspect_window, 0)
-                    if any(w['title'] == '整体指南 · PY-ML 工作台' and w['visible'] for w in windows):
+                    if any(w['title'] == '操作指南 · PY-ML 工作台' and w['visible'] for w in windows):
                         break
                     time.sleep(0.2)
-                assert any(w['title'] == '整体指南 · PY-ML 工作台' and w['visible'] for w in windows), windows
+                assert any(w['title'] == '操作指南 · PY-ML 工作台' and w['visible'] for w in windows), windows
                 resource = distribution / '_internal/pyml_workbench/resources/overall-guide.md'
                 published = distribution / 'docs/overall-guide.md'
                 canonical = Path(__file__).resolve().parents[1] / 'docs/overall-guide.md'
@@ -181,7 +181,15 @@ def main():
                 'single': ['train', 'freeze', 'test', 'automatic export'], 'batch': 'one actual search fit',
                 'worker_program': window.process.program(), 'model_count': len(pyml_workbench.list_models()),
                 'note': 'GUI EXE startup was verified separately; controller uses development Python.'}
-            assert report['model_count'] == 78
+            catalog_path = Path(pyml_workbench.__file__).resolve().with_name('model_catalog.json')
+            catalog = json.loads(catalog_path.read_text(encoding='utf-8'))
+            expected_catalog_count = len(catalog['active_models']) + sum(
+                item.get('implementation_status') == 'available'
+                for item in catalog['deferred_models']
+            )
+            assert report['model_count'] == expected_catalog_count, (
+                report['model_count'], expected_catalog_count, str(catalog_path)
+            )
             (evidence / 'qt-frozen-worker-integration.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
             print('PASS source Qt -> actual frozen single/batch workers', flush=True)
         finally:

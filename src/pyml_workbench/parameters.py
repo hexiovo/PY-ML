@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .catalog import build_estimator
+from .catalog import build_estimator, estimator_parameter_names
 from .sequence_models import EXTENDED_MODEL_IDS, validate_extended_parameters
 
 _COMMON_LABELS = {
@@ -48,10 +48,12 @@ def parameter_schema(model_id: str) -> list[dict[str, Any]]:
             for name, value in defaults.items()
         ]
     estimator = build_estimator(model_id)
+    defaults = estimator.get_params(deep=True)
     result = []
-    for name, value in estimator.get_params(deep=True).items():
+    for name in estimator_parameter_names(model_id, estimator):
         if "__" in name and name.rsplit("__", 1)[0] not in {"estimator", "base_estimator"}:
             continue
+        value = defaults.get(name)
         result.append({
             "name": name,
             "label_zh": _COMMON_LABELS.get(name, name),

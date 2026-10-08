@@ -22,6 +22,25 @@ MAX_PATH_LENGTH = 32_767
 _SCHEMA_KEYS = frozenset({"schema_version", "log_directory", "recent_files"})
 
 
+def default_application_data_directory() -> Path:
+    """Return a stable per-user data directory, independent of cwd and source files."""
+    if os.name == "nt":
+        root = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        return root / "PY-ML"
+    root = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return root / "pyml-workbench"
+
+
+def default_checkpoint_directory() -> Path:
+    """Return the user-owned root for resumable single-run state."""
+    return default_application_data_directory() / "checkpoints"
+
+
+def default_batch_directory() -> Path:
+    """Return the stable default workspace for batch history and artifacts."""
+    return default_application_data_directory() / "batch"
+
+
 class PreferenceError(ValueError):
     """Raised when a preference file or update does not satisfy its contract."""
 

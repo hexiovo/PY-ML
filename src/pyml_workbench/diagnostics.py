@@ -14,11 +14,12 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import threading
 import time
 import traceback as traceback_module
 import uuid
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 
 SCHEMA_VERSION = 1
@@ -35,6 +36,8 @@ _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _SESSION_LOCK_MARKER = b"PYML-WORKBENCH-SESSION-LOCK-V1\n"
 _ROOT_LOCK_MARKER = b"PYML-WORKBENCH-ROOT-LOCK-V1\n"
 _ROOT_LOCK_NAME = ".pyml-workbench-root-budget.lock"
+_OPERATION_LOCK_MARKER = b"PYML-WORKBENCH-OPERATION-LOCK-V1\n"
+_OPERATION_LOCK_NAME = ".pyml-workbench-operations.lock"
 _EVENT_KEYS = frozenset(
     {
         "schema",
@@ -333,6 +336,26 @@ def _default_log_root() -> Path:
     if local_app_data:
         return Path(local_app_data) / "PyMLWorkbench" / "logs"
     return Path.home() / "AppData" / "Local" / "PyMLWorkbench" / "logs"
+
+
+def default_operation_log_path() -> Path:
+    """Return the fixed application log path without relying on the cwd."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "pyml-workbench-operations.jsonl"
+    module_dir = Path(__file__).resolve().parent
+    root = next(
+        (parent for parent in module_dir.parents if (parent / "pyproject.toml").is_file()),
+        None,
+    )
+    if root is None:
+        entry = Path(sys.argv[0])
+        if not entry.is_absolute():
+            entry = module_dir / entry
+        try:
+            root = entry.resolve().parent
+        except OSError:
+            root = module_dir
+    return root / "pyml-workbench-operations.jsonl"
 
 
 def _session_key(path: Path) -> str:
@@ -785,6 +808,8 @@ class LogSession:
         backup_count: int = DEFAULT_BACKUP_COUNT,
         root_bytes: int = DEFAULT_ROOT_BYTES,
         retention_days: int = DEFAULT_RETENTION_DAYS,
+        operation_log_path: os.PathLike[str] | str | None = None,
+        on_write_failure: Callable[[str], None] | None = None,
     ) -> None:
         self.log_root = Path(log_root) if log_root is not None else _default_log_root()
         self.session_id = session_id or os.environ.get("PYML_LOG_SESSION_ID") or uuid.uuid4().hex
@@ -797,6 +822,16 @@ class LogSession:
         self.backup_count = backup_count
         self.root_bytes = root_bytes
         self.retention_days = retention_days
+        selected_operation_path = operation_log_path
+        if selected_operation_path is None:
+            selected_operation_path = os.environ.get("PYML_OPERATION_LOG_PATH")
+        self.operation_log_path = (
+            Path(selected_operation_path) if selected_operation_path else None
+        )
+        self._on_write_failure = on_write_failure
+        self._operation_log_failed = False
+        self._failure_notified = False
+        self._failure_lock = threading.Lock()
         self.session_dir: Path | None = None
         self.log_dir: Path | None = None
         self.log_path: Path | None = None
@@ -975,11 +1010,18 @@ class LogSession:
             "traceback": None,
         }
 
-    def _persist(self, row: dict[str, Any]) -> None:
+    def _persist(self, row: dict[str, Any], *, mirror_to_operation_log: bool = True) -> None:
         try:
             line = _canonical_json(row) + b"\n"
             if len(line) > self.active_bytes:
                 raise OSError("diagnostic record exceeds the active log size limit")
+            if mirror_to_operation_log and self.operation_log_path is not None and not self._operation_log_failed:
+                try:
+                    self._append_operation_line(line)
+                except Exception as exc:
+                    with self._failure_lock:
+                        self._operation_log_failed = True
+                    self._notify_write_failure(exc)
             with self._mutex:
                 if self._closed or not self.available or self.session_dir is None or self.log_path is None:
                     return
@@ -1004,6 +1046,55 @@ class LogSession:
         except Exception as exc:
             self.available = False
             self.last_error = self._error_summary(exc)
+            self._notify_write_failure(exc)
+
+    def _append_operation_line(self, line: bytes) -> None:
+        path = self.operation_log_path
+        if path is None:
+            return
+        root = _ensure_plain_directory(path.parent)
+        target = root / path.name
+        if os.path.lexists(target) and not _plain_regular_file(target, root):
+            raise DiagnosticsError("application operation log is not a regular file")
+        with _ByteRangeLock(
+            root / _OPERATION_LOCK_NAME,
+            blocking=True,
+            create=True,
+            marker=_OPERATION_LOCK_MARKER,
+        ):
+            if os.path.lexists(target) and not _plain_regular_file(target, root):
+                raise DiagnosticsError("application operation log is not a regular file")
+            fd = os.open(
+                target,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+            try:
+                with os.fdopen(fd, "ab", closefd=False) as stream:
+                    stream.write(line)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            finally:
+                os.close(fd)
+
+    def _notify_write_failure(self, exc: Exception) -> None:
+        with self._failure_lock:
+            if self._failure_notified:
+                return
+            self._failure_notified = True
+            callback = self._on_write_failure
+            message = self._error_summary(exc)
+        if callback is not None:
+            try:
+                callback(message)
+            except Exception:
+                pass
+        elif self.operation_log_path is not None:
+            try:
+                sys.stderr.write(f"[PYML_OPERATION_LOG_FAILURE] {message}\n")
+                sys.stderr.flush()
+            except Exception:
+                pass
 
     def _append_line(self, path: Path, line: bytes) -> None:
         if not _plain_regular_file(path, self.log_root):
@@ -1095,7 +1186,13 @@ class LogSession:
             log_path=str(self.log_path) if self.log_path is not None else None,
         )
 
-    def _persist_error(self, record: ErrorRecord, *, event: str = "error") -> None:
+    def _persist_error(
+        self,
+        record: ErrorRecord,
+        *,
+        event: str = "error",
+        mirror_to_operation_log: bool = True,
+    ) -> None:
         row = self._record_base()
         row.update(
             {
@@ -1111,7 +1208,7 @@ class LogSession:
                 "traceback": record.traceback,
             }
         )
-        self._persist(row)
+        self._persist(row, mirror_to_operation_log=mirror_to_operation_log)
 
     def record_error(
         self,
@@ -1138,6 +1235,7 @@ class LogSession:
         *,
         context: Mapping[str, Any] | None = None,
         error_id: str | None = None,
+        mirror_to_operation_log: bool = True,
     ) -> ErrorRecord:
         """Persist stderr or another process's already-captured error details."""
         record = self._error_record(
@@ -1147,7 +1245,7 @@ class LogSession:
             context=context,
             error_id=error_id,
         )
-        self._persist_error(record)
+        self._persist_error(record, mirror_to_operation_log=mirror_to_operation_log)
         return record
 
     def record_event(

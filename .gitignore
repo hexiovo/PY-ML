@@ -13,6 +13,7 @@ htmlcov/
 
 # Builds, delivered binaries, and local validation runs
 /build/
+/tmp/pdfs/
 /delivery/
 /RUN/
 /dist/*
@@ -23,6 +24,8 @@ htmlcov/
 /datasets/
 /runs/
 /logs/
+pyml-workbench-operations.jsonl
+.pyml-workbench-operations.lock
 *.log
 *.sqlite3
 *.sqlite3-*

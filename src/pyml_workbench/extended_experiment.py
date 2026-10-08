@@ -445,6 +445,7 @@ def prepare_extended_experiment(
         "best_epoch": provenance.get("best_epoch"),
         "best_weight_policy": provenance.get("best_weight_policy"),
         "effective_training_seed": effective_training_seed,
+        "device": str(getattr(estimator, "device", "cpu")),
     }
     if training_curves is not None:
         training_metadata["training_curves"] = _json_copy(training_curves)
@@ -681,8 +682,8 @@ def export_extended_model(bundle_or_session: ExtendedFittedModel | ExtendedExper
     return str(target)
 
 
-def load_extended_model(path: str | Path) -> ExtendedFittedModel:
-    """Load and verify a raw-data-free extended CPU bundle."""
+def load_extended_model(path: str | Path, *, device: str = "cpu") -> ExtendedFittedModel:
+    """Load portable weights on CPU by default, regardless of training device."""
     target = Path(path).expanduser().resolve()
     try:
         payload = joblib.load(target)
@@ -700,6 +701,8 @@ def load_extended_model(path: str | Path) -> ExtendedFittedModel:
     if not isinstance(config, dict) or _json_digest(config) != payload.get("config_sha256"):
         raise ExtendedExperimentError("Extended model bundle config checksum does not match")
     if payload.get("model_kind") == "hmm_estimator" and model_id in HMM_MODEL_IDS:
+        if device != "cpu":
+            raise ExtendedExperimentError("HMM 模型仅支持 CPU。")
         estimator = payload.get("estimator")
         if estimator is None:
             raise ExtendedExperimentError("HMM model bundle is missing its fitted estimator")
@@ -710,6 +713,7 @@ def load_extended_model(path: str | Path) -> ExtendedFittedModel:
             input_size=payload["input_size"],
             output_size=payload["output_size"],
             state_dict=payload["state_dict"],
+            device=device,
         )
     else:
         raise ExtendedExperimentError("Extended model bundle model kind does not match its model id")

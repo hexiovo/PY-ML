@@ -70,6 +70,10 @@ def build_session_plot_cache_manifest(session) -> dict[str, Any]:
                 raise ValueError("session result rows 格式无效")
             result_rows = _plot_cache_table_payload(result_frame)
         training_rows = _plot_cache_records_payload(getattr(session, "rows", []))
+        plot_scores = getattr(session, "plot_scores", {})
+        plot_explanations = getattr(session, "plot_explanations", {})
+        if not isinstance(plot_scores, Mapping) or not isinstance(plot_explanations, Mapping):
+            raise ValueError("session score/explanation cache metadata must be mappings")
         digests = {
             "frozen_config": _plot_cache_domain_sha256(
                 "frozen_config",
@@ -92,9 +96,11 @@ def build_session_plot_cache_manifest(session) -> dict[str, Any]:
                 "result_rows",
                 {"training_rows": training_rows, "final_results": result_rows},
             ),
+            "scores": _plot_cache_domain_sha256("scores", dict(plot_scores)),
+            "explanations": _plot_cache_domain_sha256("explanations", dict(plot_explanations)),
         }
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": _PLOT_CACHE_MANIFEST_KIND,
             "digests": digests,
         }
@@ -120,7 +126,7 @@ def _plot_cache_domain_sha256(domain: str, value: Any) -> str:
     return hashlib.sha256(prefix + encoded).hexdigest()
 
 
-def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) -> None:
+def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) -> int:
     stored = envelope.get("plot_cache_manifest")
     if not isinstance(stored, dict):
         raise PlotCacheError(
@@ -132,7 +138,7 @@ def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) ->
         "digests": stored.get("digests"),
     }
     if (
-        payload["schema_version"] != 1
+        payload["schema_version"] not in {1, 2}
         or payload["kind"] != _PLOT_CACHE_MANIFEST_KIND
         or not isinstance(payload["digests"], dict)
         or not _is_sha256(stored.get("manifest_sha256"))
@@ -156,8 +162,19 @@ def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) ->
         raise PlotCacheError("session sequence mapping 与绘图缓存 manifest 不匹配。")
     if stored_digests.get("result_rows") != expected_digests["result_rows"]:
         raise PlotCacheError("session prediction/result rows 与绘图缓存 manifest 不匹配。")
-    if stored != expected:
-        raise PlotCacheError("本次 session 绘图缓存 manifest 格式或摘要不匹配。")
+    if payload["schema_version"] == 1:
+        # Version 1 caches predate real estimator scores and native explanation
+        # metadata. Their original digests still protect all existing plot data.
+        if any(name in stored_digests for name in ("scores", "explanations")):
+            raise PlotCacheError("旧版 session 绘图缓存含有未知的评分或解释摘要。")
+    else:
+        if (
+            stored_digests.get("scores") != expected_digests["scores"]
+            or stored_digests.get("explanations") != expected_digests["explanations"]
+            or stored != expected
+        ):
+            raise PlotCacheError("session 评分/解释缓存与完整性 manifest 不匹配。")
+    return payload["schema_version"]
 
 
 def _plot_cache_table_payload(frame: pd.DataFrame) -> dict[str, Any]:
@@ -322,7 +339,8 @@ def select_plot_source_columns(source, selected_column_ids):
     provenance = replace(
         source.provenance,
         cache_payload_sha256=_source_payload_sha256(
-            source.row_positions, columns, outputs, source.sequence_map
+            source.row_positions, columns, outputs, source.sequence_map,
+            source.score_cache, source.explanation_cache,
         ),
     )
     return replace(source, columns=columns, outputs=outputs, provenance=provenance)
@@ -353,7 +371,7 @@ def load_single_session_plot_sources(
     session = envelope.get("session")
     if session is None:
         raise PlotCacheError("本次实验 session 没有已拟合的结果缓存。")
-    _verify_session_plot_cache_manifest(envelope, session)
+    plot_manifest_version = _verify_session_plot_cache_manifest(envelope, session)
     manifest = _validate_session(session, expected_config_sha256=frozen_config_sha256)
     if envelope.get("frozen_config_sha256") != frozen_config_sha256:
         raise PlotCacheError("本次实验 session 配置哈希不匹配。")
@@ -369,6 +387,7 @@ def load_single_session_plot_sources(
             owner_id=session_id,
             source_id=session_id,
             manifest=manifest,
+            plot_manifest_version=plot_manifest_version,
         )
         if source is not None:
             sources.append(source)
@@ -383,6 +402,7 @@ def load_single_session_plot_sources(
             owner_id=session_id,
             source_id=session_id,
             manifest=manifest,
+            plot_manifest_version=plot_manifest_version,
         )
         if source is not None:
             sources.append(source)
@@ -446,7 +466,7 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
         winner_plot_manifest = json.loads(winner_manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise PlotCacheError(f"无法读取 winner session 绘图 manifest：{exc}") from exc
-    _verify_session_plot_cache_manifest(
+    winner_plot_manifest_version = _verify_session_plot_cache_manifest(
         {"plot_cache_manifest": winner_plot_manifest}, result.winner_session
     )
     if result.snapshot.to_dict() != receipt.get("manifest"):
@@ -482,6 +502,7 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
             owner_id=job_id,
             source_id=job_id,
             manifest=result.snapshot.to_dict(),
+            plot_manifest_version=winner_plot_manifest_version,
             batch_hashes=batch_hashes,
             snapshot=result.snapshot,
         )
@@ -491,7 +512,7 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
             unavailable.append((partition, f"winner 缓存没有可用的 {partition} 结果行。"))
 
     try:
-        final_session = _load_verified_batch_test_session(
+        final_session, final_plot_manifest_version = _load_verified_batch_test_session(
             store=store,
             job=job,
             artifact_dir=artifact_dir,
@@ -509,6 +530,7 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
             owner_id=job_id,
             source_id=job_id,
             manifest=result.snapshot.to_dict(),
+            plot_manifest_version=final_plot_manifest_version,
             batch_hashes=batch_hashes,
             snapshot=result.snapshot,
         )
@@ -581,7 +603,7 @@ def _load_verified_batch_test_session(
     session = envelope.get("session")
     if envelope.get("frozen_config_sha256") != getattr(session, "frozen_config_sha256", None):
         raise PlotCacheError("test 分区不可用：final session 冻结配置哈希不匹配。")
-    _verify_session_plot_cache_manifest(envelope, session)
+    plot_manifest_version = _verify_session_plot_cache_manifest(envelope, session)
     if not _test_cache_is_successful(session, envelope_state=envelope.get("state")):
         raise PlotCacheError("test 分区不可用：缓存没有成功的一次性最终测试结果。")
     if result_payload.get("frozen_config_sha256") != session.frozen_config_sha256:
@@ -591,7 +613,7 @@ def _load_verified_batch_test_session(
         snapshot=expected_snapshot,
         expected_config_sha256=session.frozen_config_sha256,
     )
-    return session
+    return session, plot_manifest_version
 
 
 def _session_partition_source(
@@ -603,10 +625,14 @@ def _session_partition_source(
     owner_id: str,
     source_id: str,
     manifest: Mapping[str, Any],
+    plot_manifest_version: int,
     batch_hashes: Mapping[str, Any] | None = None,
     snapshot=None,
 ):
-    from .plotting import PlotColumn, PlotProvenance, PlotSequenceMap, PlotSource
+    from .plotting import (
+        PlotColumn, PlotExplanationCache, PlotProvenance, PlotScoreCache,
+        PlotSequenceMap, PlotSource,
+    )
 
     if partition not in {"train", "validation", "test"}:
         raise PlotCacheError(f"Unsupported result partition {partition!r}")
@@ -644,6 +670,90 @@ def _session_partition_source(
         ))
 
     outputs = _result_outputs(session.config.task, selected)
+    score_cache = None
+    score_unavailable_reason = None
+    if plot_manifest_version == 1:
+        if session.config.task == "classification":
+            score_unavailable_reason = (
+                "旧版 session manifest 未保护真实概率或决策分数，需重新训练后才能绘 ROC/PR；"
+                "其他已有结果图仍可使用。"
+            )
+    else:
+        raw_scores = getattr(session, "plot_scores", {})
+        score_record = raw_scores.get(partition) if isinstance(raw_scores, Mapping) else None
+        if isinstance(score_record, Mapping) and score_record.get("available") is True:
+            score_positions = tuple(_as_position(value) for value in score_record.get("row_positions", ()))
+            score_values = score_record.get("values")
+            score_map = score_record.get("score_column_map")
+            class_order = score_record.get("class_order")
+            if (
+                score_positions != positions
+                or not isinstance(score_values, list)
+                or not isinstance(score_map, list)
+                or not isinstance(class_order, list)
+            ):
+                raise PlotCacheError(f"{partition} 分类分数的行位置、类别或列映射与结果行不匹配。")
+            try:
+                score_cache = PlotScoreCache(
+                    row_positions=score_positions,
+                    score_type=score_record["score_type"],
+                    semantics=score_record["semantics"],
+                    class_order=tuple(_scalar(value, context="评分类别", allow_tuple=True) for value in class_order),
+                    score_column_map=tuple(
+                        (
+                            _as_position(item["column_index"]),
+                            _scalar(item["class_label"], context="评分列类别", allow_tuple=True),
+                        )
+                        for item in score_map
+                    ),
+                    values=tuple(tuple(float(value) for value in row) for row in score_values),
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise PlotCacheError(f"{partition} 分类分数缓存格式无效：{exc}") from exc
+        elif isinstance(score_record, Mapping):
+            score_unavailable_reason = str(score_record.get("reason") or "估计器没有可用的真实类别分数输出。")
+        elif session.config.task == "classification":
+            score_unavailable_reason = (
+                "旧缓存没有真实概率或决策分数，需重新训练后才能绘 ROC/PR；其他已有结果图仍可使用。"
+                if not hasattr(session, "plot_scores")
+                else f"此 {partition} 分区没有真实分类分数缓存；请重新训练以生成 ROC/PR。"
+            )
+    if score_cache is not None and session.config.task == "classification":
+        target_output = next(
+            (column for column in outputs if column.column_id == "classification.y_true"),
+            None,
+        )
+        if target_output is not None and len({
+            (type(value), value) for value in target_output.values if not _is_missing(value)
+        }) < 2:
+            score_unavailable_reason = "当前评估分区只有一个类别；ROC/PR 需要正例和负例同时存在。"
+    explanation_cache = None
+    explanation_unavailable_reason = None
+    if plot_manifest_version == 1:
+        explanation_unavailable_reason = (
+            "旧版 session manifest 未保护模型解释量，需重新训练后才能查看模型系数或特征重要性。"
+        )
+    else:
+        raw_explanation = getattr(session, "plot_explanations", None)
+        if isinstance(raw_explanation, Mapping) and raw_explanation.get("available") is True:
+            try:
+                explanation_cache = PlotExplanationCache(
+                    kind=raw_explanation["kind"],
+                    feature_names=tuple(str(value) for value in raw_explanation["feature_names"]),
+                    class_labels=tuple(
+                        _scalar(value, context="模型解释类别", allow_tuple=True)
+                        for value in raw_explanation.get("class_labels", ())
+                    ),
+                    values=tuple(tuple(float(value) for value in row) for row in raw_explanation["values"]),
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise PlotCacheError(f"模型解释缓存格式无效：{exc}") from exc
+        elif isinstance(raw_explanation, Mapping):
+            explanation_unavailable_reason = str(
+                raw_explanation.get("reason") or "此估计器没有可用的原生特征解释量。"
+            )
+        else:
+            explanation_unavailable_reason = "此旧缓存没有模型原生解释量；需重新训练后可查看。"
     plan = getattr(session, "sequence_plan", None)
     sequence_map: tuple[Any, ...] = ()
     if plan is not None:
@@ -691,7 +801,9 @@ def _session_partition_source(
         receipt_manifest_sha256=batch_hashes.get("receipt_manifest_sha256"),
         receipt_file_sha256=batch_hashes.get("receipt_file_sha256"),
         sequence_plan_sha256=batch_hashes.get("sequence_plan_sha256") or getattr(plan, "plan_sha256", None),
-        cache_payload_sha256=_source_payload_sha256(positions, tuple(columns), outputs, sequence_map),
+        cache_payload_sha256=_source_payload_sha256(
+            positions, tuple(columns), outputs, sequence_map, score_cache, explanation_cache
+        ),
     )
     return PlotSource(
         schema_version=1,
@@ -706,6 +818,10 @@ def _session_partition_source(
         sequence_map=sequence_map,
         provenance=provenance,
         partition_count=len(positions),
+        score_cache=score_cache,
+        explanation_cache=explanation_cache,
+        score_unavailable_reason=score_unavailable_reason,
+        explanation_unavailable_reason=explanation_unavailable_reason,
     )
 
 
@@ -910,7 +1026,9 @@ def _is_missing(value: Any) -> bool:
     return isinstance(value, (float, np.floating)) and math.isnan(float(value))
 
 
-def _source_payload_sha256(row_positions, columns, outputs, sequence_map) -> str:
+def _source_payload_sha256(
+    row_positions, columns, outputs, sequence_map, score_cache=None, explanation_cache=None
+) -> str:
     payload = {
         "row_positions": [int(value) for value in row_positions],
         "columns": [_column_payload(column) for column in columns],
@@ -925,6 +1043,23 @@ def _source_payload_sha256(row_positions, columns, outputs, sequence_map) -> str
             }
             for item in sequence_map
         ],
+        "score_cache": None if score_cache is None else {
+            "row_positions": list(score_cache.row_positions),
+            "score_type": score_cache.score_type,
+            "semantics": score_cache.semantics,
+            "class_order": [_typed_value(value) for value in score_cache.class_order],
+            "score_column_map": [
+                {"column_index": index, "class_label": _typed_value(label)}
+                for index, label in score_cache.score_column_map
+            ],
+            "values": [list(row) for row in score_cache.values],
+        },
+        "explanation_cache": None if explanation_cache is None else {
+            "kind": explanation_cache.kind,
+            "feature_names": list(explanation_cache.feature_names),
+            "class_labels": [_typed_value(value) for value in explanation_cache.class_labels],
+            "values": [list(row) for row in explanation_cache.values],
+        },
     }
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+import errno
 import json
 import os
 from pathlib import Path
+import re
+import stat
 import time
 import uuid
 
@@ -106,9 +109,16 @@ def _lock(path):
     marker = path.with_name(path.name + ".lock")
     try:
         descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as exc:
-        raise ExperimentError("Final session is busy or has an interrupted lock") from exc
-    os.close(descriptor)
+    except FileExistsError:
+        _remove_dead_pid_lock(marker)
+        try:
+            descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as exc:
+            raise ExperimentError("Final session is busy or has an interrupted lock") from exc
+    try:
+        os.write(descriptor, str(os.getpid()).encode("ascii"))
+    finally:
+        os.close(descriptor)
     try:
         yield
     finally:
@@ -132,12 +142,15 @@ def _refresh_plot_cache_manifest(envelope, *, allow_create=False):
     envelope["plot_cache_manifest"] = build_session_plot_cache_manifest(session)
 
 
-def _verify_envelope(path, envelope, selection):
+def _verify_envelope(path, envelope, selection, *, allow_interrupted_test=False):
     if not isinstance(envelope, dict) or envelope.get("kind") != "pyml-workbench-internal-session" or envelope.get("schema_version") != 1 or envelope.get("session_path") != str(path):
         raise ExperimentError("File/path is not the expected final session")
     if envelope.get("selection_sha256") != selection.selection_sha256 or envelope.get("selection") != selection.to_dict():
         raise ExperimentError("Final session belongs to another selection")
-    if envelope.get("state") in {"refitting", "refit_failed", "testing", "test_failed"}:
+    state = envelope.get("state")
+    if state in {"refitting", "refit_failed", "test_failed"} or (
+        state == "testing" and not allow_interrupted_test
+    ):
         raise ExperimentError("Final refit/test was interrupted or failed; automatic retry is prohibited")
     session = envelope.get("session")
     if not isinstance(session, ExperimentSession) or not session.frozen or session.fit_scope != "train_validation":
@@ -158,7 +171,10 @@ def _verify_envelope(path, envelope, selection):
     expected_train = np.concatenate([selection.snapshot.splits["train"], selection.snapshot.splits["validation"]])
     if not np.array_equal(session.splits["train"], expected_train) or len(session.splits["validation"]) or not np.array_equal(session.splits["test"], selection.snapshot.splits["test"]):
         raise ExperimentError("Final refit/test positions were modified")
-    if not isinstance(envelope.get("session_id"), str) or envelope.get("state") not in {"frozen", "tested"}:
+    allowed_states = {"frozen", "tested"}
+    if allow_interrupted_test:
+        allowed_states.add("testing")
+    if not isinstance(envelope.get("session_id"), str) or state not in allowed_states:
         raise ExperimentError("Final session identity/state is invalid")
     session_plan = getattr(session, "sequence_plan", None)
     if (session_plan.to_dict() if session_plan is not None else None) != (selection.sequence_plan.to_dict() if selection.sequence_plan is not None else None):
@@ -167,16 +183,35 @@ def _verify_envelope(path, envelope, selection):
         raise ExperimentError("Final session test state is inconsistent")
     if envelope["state"] == "tested" and (not session.finalized or session.result is None):
         raise ExperimentError("Final session is missing its cached test result")
+    if envelope["state"] == "testing" and (
+        session.finalized
+        or session.result is not None
+        or session.test_evaluation_count != 0
+        or "test" in session.metrics
+    ):
+        raise ExperimentError("Interrupted test session already contains a test result")
 
 
-def _refit(selection, path, on_event, should_cancel):
+def _refit(selection, path, on_event, should_cancel, *, allow_interrupted_test=False):
     selection.verify()
     source = Path(selection.snapshot.source_path).resolve()
     if path == source or path == source.parent or path.suffix != ".joblib":
         raise ExperimentError("Final session must use a separate .joblib file")
     if path.exists():
         envelope = joblib.load(path)
-        _verify_envelope(path, envelope, selection)
+        _verify_envelope(
+            path,
+            envelope,
+            selection,
+            allow_interrupted_test=allow_interrupted_test,
+        )
+        if envelope["state"] == "testing":
+            # The durable envelope was atomically written before evaluate_test.
+            # Its frozen session must still have zero test evaluations, which
+            # _verify_envelope checks above; return it to the pre-test state so
+            # the explicitly authorized retry can consume the same permission.
+            envelope["state"] = "frozen"
+            atomic_joblib(path, envelope)
         return envelope, True
     if should_cancel and should_cancel():
         raise ExperimentError("Final refit cancelled before starting")
@@ -222,11 +257,129 @@ def refit_selected(selection, *, session_path, on_event=None, should_cancel=None
         return _result(envelope, cached)
 
 
-def finalize_selected(selection, *, session_path, on_event=None, should_cancel=None):
+def _remove_stale_interrupted_test_lock(path):
+    marker = path.with_name(path.name + ".lock")
+    _remove_dead_pid_lock(marker)
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        open_process.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = open_process(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == 87:  # ERROR_INVALID_PARAMETER: no process owns this valid PID.
+                return False
+            if error == 5:  # Access denied is inconclusive, so keep the lock.
+                return True
+            raise OSError(error, "Could not inspect final-session lock owner")
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                error = ctypes.get_last_error()
+                raise OSError(error, "Could not inspect final-session lock owner")
+            return exit_code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
+        if exc.errno == errno.EPERM:
+            return True
+        raise
+    return True
+
+
+def _remove_dead_pid_lock(marker: Path) -> None:
+    """Remove a lock only when its well-formed owner PID is confirmed absent."""
+    try:
+        before = marker.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ExperimentError("Could not verify the interrupted final-test lock") from exc
+    if not stat.S_ISREG(before.st_mode):
+        raise ExperimentError("Could not verify the interrupted final-test lock")
+    try:
+        raw_pid = marker.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError) as exc:
+        raise ExperimentError("Could not verify the interrupted final-test lock") from exc
+    try:
+        after_read = marker.lstat()
+    except OSError as exc:
+        raise ExperimentError("Could not verify the interrupted final-test lock") from exc
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after_read.st_dev, after_read.st_ino, after_read.st_size, after_read.st_mtime_ns)
+    if not stat.S_ISREG(after_read.st_mode) or after_identity != before_identity:
+        raise ExperimentError("Final session lock changed while it was being verified")
+    if not re.fullmatch(r"[0-9]+", raw_pid):
+        raise ExperimentError("Could not verify the interrupted final-test lock")
+    pid = int(raw_pid)
+    if pid <= 0 or (os.name == "nt" and pid > 0xFFFFFFFF):
+        raise ExperimentError("Could not verify the interrupted final-test lock")
+    try:
+        alive = _pid_is_alive(pid)
+    except OSError as exc:
+        raise ExperimentError("Could not verify the interrupted final-test lock") from exc
+    if alive:
+        raise ExperimentError("Final session is still busy")
+    try:
+        current = marker.lstat()
+        current_identity = (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+        if not stat.S_ISREG(current.st_mode) or current_identity != before_identity:
+            raise ExperimentError("Final session lock changed while it was being verified")
+        marker.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ExperimentError("Could not clear the stopped final-test lock") from exc
+
+
+def finalize_selected(
+    selection,
+    *,
+    session_path,
+    on_event=None,
+    should_cancel=None,
+    allow_interrupted_test=False,
+):
     """Explicit final action; repeat calls only load the same durable test cache."""
     path = Path(session_path).expanduser().resolve()
+    if allow_interrupted_test and path.is_file():
+        envelope = joblib.load(path)
+        if not isinstance(envelope, dict) or envelope.get("state") != "testing":
+            raise ExperimentError("Safe retry requires an interrupted final test")
+        _verify_envelope(
+            path,
+            envelope,
+            selection,
+            allow_interrupted_test=True,
+        )
+        _remove_stale_interrupted_test_lock(path)
     with _lock(path):
-        envelope, cached = _refit(selection, path, on_event, should_cancel)
+        envelope, cached = _refit(
+            selection,
+            path,
+            on_event,
+            should_cancel,
+            allow_interrupted_test=allow_interrupted_test,
+        )
         if envelope["state"] == "tested":
             return _result(envelope, True)
         if should_cancel and should_cancel():

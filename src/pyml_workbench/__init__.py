@@ -48,7 +48,7 @@ from .search_space import SearchSpace, recommended_space
 from .sequence import SequenceConfig, SequenceError, SequencePlan
 from .selection import FinalSelection, FrozenSelection
 
-__version__ = "0.4.2"
+__version__ = "0.4.4"
 
 __all__ = [
     "BatchError",

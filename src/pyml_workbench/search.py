@@ -212,6 +212,9 @@ class _SearchEngine:
         self.previous_elapsed = 0.
         self.started, self.paused_seconds = time.monotonic(), 0.
         self.cache, self.winner, self.winner_session = {}, None, None
+        self._resume_replay_records: list[TrialRecord] = []
+        self._resume_replay_cursor = 0
+        self._resume_replay_active = False
         self.snapshot_path = self.best_session_path = None
         self.sequence_plan_path = None
         self.sequence_plan_receipt = None
@@ -232,6 +235,9 @@ class _SearchEngine:
             self.sequence_plan_path = resume.sequence_plan_path
             self.sequence_plan_receipt = resume.sequence_plan_receipt
             self.trials = [TrialRecord.from_dict(item.to_dict() if isinstance(item, TrialRecord) else item) for item in resume.records]
+            self.trials.sort(key=lambda item: item.proposal_index)
+            self._resume_replay_records = list(self.trials)
+            self._resume_replay_active = bool(self._resume_replay_records)
             self.actual_fit_count, self.proposal_count, self.previous_elapsed = resume.actual_fit_count, resume.proposal_count, resume.elapsed_seconds
             if self.actual_fit_count != max((item.fit_index or 0 for item in self.trials), default=0) or self.proposal_count != max((item.proposal_index for item in self.trials), default=0):
                 raise ValueError("Resume counters do not match persisted trial receipts")
@@ -242,7 +248,7 @@ class _SearchEngine:
                     digest = _canonical_config(replace(config, parameters=item.parameters, output_dir=None))[1]
                     if item.config_sha256 != digest or item.cache_key != _json_digest({"search": self.fingerprint, "config": digest}) or item.metric != self.objective.metric or item.direction != self.objective.direction or item.score_split != self.objective.split:
                         raise ValueError("Resume trial belongs to another configuration/objective")
-                if item.cache_key and not item.cache_hit:
+                if item.cache_key and not item.cache_hit and item.status != "proposed":
                     self.cache[item.cache_key] = item
                 if item.status == "complete" and self.better(item):
                     self.winner = item
@@ -334,7 +340,13 @@ class _SearchEngine:
             return True
         return record.objective_value > self.winner.objective_value if self.objective.direction == "max" else record.objective_value < self.winner.objective_value
 
-    def gate(self):
+    def gate(
+        self,
+        *,
+        check_fit_budget: bool = True,
+        check_proposal_budget: bool = True,
+        check_time_budget: bool = True,
+    ):
         if self.should_cancel and self.should_cancel():
             self.stop_reason = "cancelled"
             raise _StopSearch
@@ -348,52 +360,47 @@ class _SearchEngine:
         if self.should_cancel and self.should_cancel():
             self.stop_reason = "cancelled"
             raise _StopSearch
-        if self.actual_fit_count >= self.spec.max_fits:
+        if check_fit_budget and self.actual_fit_count >= self.spec.max_fits:
             self.stop_reason = "fit_limit"
-        elif self.proposal_count >= self.spec.max_proposals:
+        elif check_proposal_budget and self.proposal_count >= self.spec.max_proposals:
             self.stop_reason = "proposal_limit"
-        elif self.elapsed() >= self.spec.timeout_seconds:
+        elif check_time_budget and self.elapsed() >= self.spec.timeout_seconds:
             self.stop_reason = "time_limit"
         else:
             return
         raise _StopSearch
 
-    def evaluate(self, candidate):
-        self.gate()
-        self.proposal_count += 1
-        record = TrialRecord(str(uuid.uuid4()), self.proposal_count, None, "invalid", {}, direction=self.objective.direction, metric=self.objective.metric, score_split=self.objective.split)
-        before = time.monotonic()
+    def _replayed_record(self, candidate) -> TrialRecord | None:
+        """Recognize the persisted prefix when an adapter restarts its sampler."""
+        if not self._resume_replay_active:
+            return None
+        if self._resume_replay_cursor >= len(self._resume_replay_records):
+            self._resume_replay_active = False
+            return None
+        expected = self._resume_replay_records[self._resume_replay_cursor]
         try:
-            record.parameters = self.spec.space.canonical(candidate, self.config.parameters)
-            trial_config = replace(self.config, parameters=record.parameters, output_dir=None)
-            if trial_config.model_id in EXTENDED_MODEL_IDS:
-                validate_extended_parameters(trial_config.model_id, trial_config.parameters)
-            else:
-                estimator = build_estimator(trial_config.model_id, trial_config.parameters, seed=trial_config.split.seed)
-                estimator._validate_params()
-            record.config_sha256 = _canonical_config(trial_config)[1]
-            record.cache_key = _json_digest({"search": self.fingerprint, "config": record.config_sha256})
+            parameters = self.spec.space.canonical(candidate, self.config.parameters)
+            trial_config = replace(self.config, parameters=parameters, output_dir=None)
+            digest = _canonical_config(trial_config)[1]
         except (ValueError, TypeError) as exc:
-            record.error = str(exc)
-            self.trials.append(record)
-            self.emit("proposal", record)
-            return float("inf")
-        self.emit("proposal", record)
-        if record.cache_key in self.cache:
-            cached = self.cache[record.cache_key]
-            record.status, record.cache_hit, record.cached_from = "cached", True, cached.trial_id
-            record.objective_value, record.metrics, record.error = cached.objective_value, json_copy(cached.metrics), cached.error
-            record.training_curves = json_copy(cached.training_curves) if cached.training_curves is not None else None
-            record.error_id, record.traceback = cached.error_id, cached.traceback
-            self.trials.append(record)
-            self.emit("cache_hit", record)
-            return self.loss(record)
+            if expected.status != "invalid" or expected.error != str(exc):
+                self._resume_replay_active = False
+                return None
+        else:
+            if expected.config_sha256 != digest:
+                self._resume_replay_active = False
+                return None
+        self._resume_replay_cursor += 1
+        return expected
+
+    def _fit_record(self, record: TrialRecord, *, before: float) -> float:
         self.actual_fit_count += 1
         record.fit_index, record.status = self.actual_fit_count, "running"
-        # Callback errors propagate. The persistence owner must commit this receipt
-        # before returning; no fit begins if recording the budget fails.
+        # Callback errors propagate. The persistence owner must commit this
+        # receipt before returning; no fit begins if recording the budget fails.
         self.emit("fit_started", record)
         session = None
+        trial_config = replace(self.config, parameters=record.parameters, output_dir=None)
         try:
             with threadpool_limits(limits=1):
                 session = prepare_experiment(trial_config, snapshot=self.snapshot, sequence_plan=self.sequence_plan)
@@ -428,8 +435,11 @@ class _SearchEngine:
                     # Diagnostics must never change fit, budget, or cancellation behavior.
                     pass
         record.duration_seconds = time.monotonic() - before
-        self.trials.append(record)
-        self.cache[record.cache_key] = record
+        if not any(item.trial_id == record.trial_id for item in self.trials):
+            self.trials.append(record)
+        if record.cache_key:
+            self.cache[record.cache_key] = record
+        self.emit("fit_completed", record)
         if record.status == "complete" and self.better(record):
             self.winner, self.winner_session = record, session
             if self.directory:
@@ -439,6 +449,55 @@ class _SearchEngine:
                 record.session_path = self.best_session_path = str(path)
         self.emit("trial_failed" if record.status == "failed" else "trial_completed", record, best_session_path=self.best_session_path)
         return self.loss(record)
+
+    def retry_pending(self) -> None:
+        """Rerun each preserved proposal before a restarted sampler advances."""
+        pending = [record for record in self.trials if record.status == "proposed"]
+        if len(pending) > 1:
+            raise ValueError("Resume history contains multiple unresolved proposals")
+        for record in pending:
+            # This proposal already owns its proposal slot. The fit budget and
+            # time/cancel gates still apply to its retried fit.
+            self.gate(check_proposal_budget=False)
+            self._fit_record(record, before=time.monotonic())
+
+    def evaluate(self, candidate):
+        replayed = self._replayed_record(candidate)
+        if replayed is not None:
+            # Replayed sampler inputs are existing durable proposals, not new
+            # proposal/fit receipts. Still honor pause/cancel at this safe point.
+            self.gate(check_fit_budget=False, check_proposal_budget=False, check_time_budget=False)
+            return self.loss(replayed)
+        self.gate()
+        self.proposal_count += 1
+        record = TrialRecord(str(uuid.uuid4()), self.proposal_count, None, "invalid", {}, direction=self.objective.direction, metric=self.objective.metric, score_split=self.objective.split)
+        before = time.monotonic()
+        try:
+            record.parameters = self.spec.space.canonical(candidate, self.config.parameters)
+            trial_config = replace(self.config, parameters=record.parameters, output_dir=None)
+            if trial_config.model_id in EXTENDED_MODEL_IDS:
+                validate_extended_parameters(trial_config.model_id, trial_config.parameters)
+            else:
+                estimator = build_estimator(trial_config.model_id, trial_config.parameters, seed=trial_config.split.seed)
+                estimator._validate_params()
+            record.config_sha256 = _canonical_config(trial_config)[1]
+            record.cache_key = _json_digest({"search": self.fingerprint, "config": record.config_sha256})
+        except (ValueError, TypeError) as exc:
+            record.error = str(exc)
+            self.trials.append(record)
+            self.emit("proposal", record)
+            return float("inf")
+        self.emit("proposal", record)
+        if record.cache_key in self.cache:
+            cached = self.cache[record.cache_key]
+            record.status, record.cache_hit, record.cached_from = "cached", True, cached.trial_id
+            record.objective_value, record.metrics, record.error = cached.objective_value, json_copy(cached.metrics), cached.error
+            record.training_curves = json_copy(cached.training_curves) if cached.training_curves is not None else None
+            record.error_id, record.traceback = cached.error_id, cached.traceback
+            self.trials.append(record)
+            self.emit("cache_hit", record)
+            return self.loss(record)
+        return self._fit_record(record, before=before)
 
     def loss(self, record):
         if record.objective_value is None:
@@ -571,6 +630,7 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
     engine = _SearchEngine(config, spec, snapshot, job_id or str(uuid.uuid4()), on_event, should_cancel, wait_for_dispatch, resumed, artifact_dir, sequence_plan=sequence_plan, error_handler=error_handler)
     engine.emit("search_started", snapshot=snapshot.to_dict(), snapshot_path=engine.snapshot_path, fingerprint=engine.fingerprint, spec=spec.to_dict())
     try:
+        engine.retry_pending()
         _adapter(engine)
     except _StopSearch:
         pass
