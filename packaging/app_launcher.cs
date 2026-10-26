@@ -3,22 +3,26 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("PY-ML 机器学习工作台")]
 [assembly: AssemblyDescription("PY-ML 工作台启动入口")]
-[assembly: AssemblyVersion("0.4.4.0")]
+[assembly: AssemblyVersion("0.4.5.0")]
 
 internal static class AppLauncher
 {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appID);
     [STAThread]
     private static void Main()
     {
         try
         {
+            SetCurrentProcessExplicitAppUserModelID("hexiovo.PYML.Workbench");
             string directory = Path.GetFullPath(Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
-                @"..\PY-ML\dist\ui-polish-20261008\PYML-Workbench-standard"));
+                @"..\PY-ML\dist\plugin-settings-20261011\PYML-Workbench-deep"));
             string executable = Path.Combine(directory, "PYML-Workbench.exe");
             if (!File.Exists(executable) || !File.Exists(Path.Combine(directory, "PYML-Worker.exe"))
                 || !Directory.Exists(Path.Combine(directory, "_internal")))

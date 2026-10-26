@@ -28,7 +28,12 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _WRAPPER_REQUIRED = {"schema", "config", "sha256"}
 _WRAPPER_ALLOWED = _WRAPPER_REQUIRED | {"name"}
 _CONFIG_REQUIRED = {"dataset", "task", "model_id", "parameters", "split", "output_dir"}
-_CONFIG_ALLOWED = _CONFIG_REQUIRED | {"sequence"}
+_CONFIG_ALLOWED = _CONFIG_REQUIRED | {
+    "sequence",
+    "pca_components",
+    "reduction_method",
+    "reduction_components",
+}
 _DATASET_FIELDS = {"source_path", "sheet_name", "target_column", "feature_columns"}
 _SPLIT_FIELDS = {"seed", "train_fraction", "validation_fraction", "test_fraction"}
 
@@ -135,6 +140,40 @@ def _validate_config_shape(payload: Any) -> dict[str, Any]:
         raise PresetError("output_dir must be a string path or null")
     if "sequence" in payload and payload["sequence"] is not None and not isinstance(payload["sequence"], dict):
         raise PresetError("sequence must be a JSON object or null")
+    if "pca_components" in payload and (
+        type(payload["pca_components"]) is not int or payload["pca_components"] < 1
+    ):
+        raise PresetError("pca_components must be a positive integer when present")
+    has_method = "reduction_method" in payload
+    has_components = "reduction_components" in payload
+    if has_method != has_components:
+        raise PresetError(
+            "reduction_method and reduction_components must be provided together"
+        )
+    if has_method:
+        from .config import SUPPORTED_REDUCTION_METHODS
+
+        method = payload["reduction_method"]
+        components = payload["reduction_components"]
+        if method is not None and (
+            not isinstance(method, str) or method not in SUPPORTED_REDUCTION_METHODS
+        ):
+            raise PresetError(f"unsupported reduction_method: {method!r}")
+        if components is not None and (
+            type(components) is not int or components < 1
+        ):
+            raise PresetError("reduction_components must be a positive integer or null")
+        if (method is None) != (components is None):
+            raise PresetError(
+                "reduction_method and reduction_components must be provided together"
+            )
+        legacy_components = payload.get("pca_components")
+        if legacy_components is not None and method is not None and (
+            method != "pca" or components != legacy_components
+        ):
+            raise PresetError(
+                "pca_components conflicts with reduction_method/reduction_components"
+            )
     _validate_json_tree(payload)
     return payload
 

@@ -22,7 +22,13 @@ import joblib
 import pandas as pd
 
 from .catalog import list_models
-from .config import DatasetConfig, ExperimentConfig, SplitConfig
+from .config import (
+    SUPPORTED_REDUCTION_METHODS,
+    DatasetConfig,
+    ExperimentConfig,
+    SplitConfig,
+    reduction_unsupported_reason,
+)
 from .data import LoadedDataset, load_dataset
 from .parameters import parameter_defaults, parameter_schema
 from .preferences import (
@@ -34,6 +40,14 @@ from .preferences import (
 )
 from .checkpoints import CheckpointError, load_checkpoint, save_checkpoint
 from .runtime import worker_command
+from .plugins import (
+    HYPEREEG_SOURCE,
+    PYFNIRS_SOURCE,
+    PluginError,
+    PluginSettingsStore,
+    detect_hypereeg_data_conversion,
+    detect_pyfnirs_data_conversion,
+)
 from .run_timing import (
     RunTiming,
     SHORT_STEP_REFERENCE_SECONDS,
@@ -41,6 +55,16 @@ from .run_timing import (
     summarize_batch_outcomes,
 )
 from .sequence import SequenceConfig
+from .evaluation_ui import (
+    ChartSourceChoice,
+    ExportRequest,
+    PARTITION_LABELS,
+    ResultChartPage,
+    add_or_select_result_chart_tab,
+    create_evaluation_controls,
+    run_export_dialog,
+    set_kfold_availability,
+)
 
 _WORKER_ERROR_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _NO_PARAMETER_OVERRIDE = object()
@@ -103,7 +127,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QDesktopServices, QFont, QFontDatabase
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -151,6 +175,14 @@ TASKS = (
     ("异常检测", "anomaly detection"),
     ("序列建模 / HMM", "sequence_modeling"),
 )
+
+REDUCTION_METHOD_LABELS = {
+    "pca": "PCA（主成分分析）",
+    "truncated_svd": "TruncatedSVD（截断奇异值分解）",
+    "fast_ica": "FastICA（独立成分分析）",
+    "gaussian_random_projection": "GaussianRandomProjection（高斯随机投影）",
+    "kernel_pca": "KernelPCA（核主成分分析）",
+}
 
 EVENT_LABELS = {
     "dataset_loaded": "已读取数据",
@@ -896,9 +928,9 @@ class PlotSourceChooserDialog(QDialog):
         partitions = self._source_groups.get(key, {})
         self.partition_combo.blockSignals(True)
         self.partition_combo.clear()
-        for partition in ("all", "train", "validation", "test"):
+        for partition in ("all", "train", "validation", "oof", "test"):
             if partition in partitions:
-                self.partition_combo.addItem(partition, partition)
+                self.partition_combo.addItem(PARTITION_LABELS.get(partition, partition), partition)
         self.partition_combo.blockSignals(False)
         self._refresh_columns()
 
@@ -1096,15 +1128,20 @@ class WorkbenchWindow(QMainWindow):
         self._resume_test_after_restore = False
         self._params_initializing = False
         self._applying_configuration = False
+        self._legacy_pca_config_unchanged = False
         self._loaded_parameters: dict[str, Any] | None = None
         self._loaded_advanced_text: str | None = None
         self._loaded_advanced_names: set[str] = set()
         self._edited_parameter_names: set[str] = set()
         self._batch_dialog = None
         self._guide_dialog = None
+        self._environment_dialog = None
         self._data_overview_dialog: DataOverviewDialog | None = None
         self._plot_dialogs: list[QDialog] = []
         self._session_plot_sources: dict[str, Any] = {}
+        self._result_chart_autoselect_pending = True
+        self._result_tabs_user_interacted = False
+        self._result_tabs_programmatic_change = False
         self._wizard_step = 0
         self._wizard_step_revision = 0
         self._selected_batch_models: set[str] = set()
@@ -1132,6 +1169,14 @@ class WorkbenchWindow(QMainWindow):
             preferences_path or _default_preferences_path()
         )
         self.preferences = Preferences()
+        self.plugin_settings_store = PluginSettingsStore(
+            self.preference_store.path.with_name("plugins.json"),
+            legacy_paths={
+                PYFNIRS_SOURCE: self.preference_store.path.with_name(
+                    "pyfnirs_plugins.json"
+                )
+            },
+        )
         self.logging_controller = logging_controller
         self._log_failure_bridge = _LogFailureBridge(self)
         self._log_failure_bridge.failed.connect(
@@ -1145,6 +1190,8 @@ class WorkbenchWindow(QMainWindow):
         self._build_ui()
         self._connect_ui()
         self._load_preferences()
+        self.refresh_plugins()
+        self.refresh_pyfnirs_plugin()
         self._interaction_filter = _InteractionEventFilter(
             QApplication.instance(), self.logging_controller, self
         )
@@ -1165,6 +1212,7 @@ class WorkbenchWindow(QMainWindow):
         self._refresh_deferred_models()
         self._refresh_model_choices()
         self._update_target_state()
+        self._update_evaluation_support()
         self._set_worker_busy(False)
 
     def _show_log_write_failure(self, message: str) -> None:
@@ -1306,11 +1354,55 @@ class WorkbenchWindow(QMainWindow):
             lambda _checked=False: self.set_log_directory(None)
         )
         file_menu.addAction(self.reset_log_directory_action)
+        self.format_menu = self.menuBar().addMenu("格式")
+        self.data_conversion_menu = self.format_menu.addMenu("数据转换")
+        self.hypereeg_conversion_action = QAction("HyperEEG", self)
+        self.hypereeg_conversion_action.setObjectName("hypereegConversionAction")
+        self.hypereeg_conversion_action.setEnabled(False)
+        self.hypereeg_conversion_action.triggered.connect(self.open_data_conversion)
+        self.data_conversion_menu.addAction(self.hypereeg_conversion_action)
+        self.pyfnirs_conversion_action = QAction("PYfNIRs", self)
+        self.pyfnirs_conversion_action.setObjectName("pyfnirsConversionAction")
+        self.pyfnirs_conversion_action.setEnabled(False)
+        self.pyfnirs_conversion_action.triggered.connect(
+            self.open_pyfnirs_data_conversion
+        )
+        self.data_conversion_menu.addAction(self.pyfnirs_conversion_action)
+        self.data_conversion_menu.addSeparator()
+        self.conversion_plugin_settings_action = QAction("插件设置…", self)
+        self.conversion_plugin_settings_action.setObjectName(
+            "conversionPluginSettingsAction"
+        )
+        self.conversion_plugin_settings_action.triggered.connect(
+            self.show_plugin_settings
+        )
+        self.data_conversion_menu.addAction(self.conversion_plugin_settings_action)
+        self.format_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        self.data_conversion_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        self.format_menu.aboutToShow.connect(self.refresh_plugins)
+        self.data_conversion_menu.aboutToShow.connect(self.refresh_plugins)
+        plugin_menu = self.menuBar().addMenu("插件")
+        self.data_conversion_action = QAction("数据转换…", self)
+        self.data_conversion_action.setObjectName("dataConversionAction")
+        self.data_conversion_action.setEnabled(False)
+        self.data_conversion_action.triggered.connect(self.open_data_conversion)
+        plugin_menu.addAction(self.data_conversion_action)
+        plugin_menu.addSeparator()
+        self.plugin_settings_action = QAction("设置…", self)
+        self.plugin_settings_action.setObjectName("pluginSettingsAction")
+        self.plugin_settings_action.triggered.connect(self.show_plugin_settings)
+        plugin_menu.addAction(self.plugin_settings_action)
+        plugin_menu.aboutToShow.connect(self.refresh_plugins)
         help_menu = self.menuBar().addMenu("帮助")
         self.overall_guide_action = QAction("操作指南", self)
         self.overall_guide_action.setShortcut("F1")
         self.overall_guide_action.triggered.connect(self.show_overall_guide)
         help_menu.addAction(self.overall_guide_action)
+        self.environment_check_action = QAction("检查运行环境…", self)
+        self.environment_check_action.setObjectName("environmentCheckAction")
+        self.environment_check_action.setToolTip("检查必需依赖、可选组件、版本和后台运行环境")
+        self.environment_check_action.triggered.connect(self.show_environment_check)
+        help_menu.addAction(self.environment_check_action)
         help_menu.addSeparator()
         self.contact_action = QAction("联系（GitHub Issue）", self)
         self.contact_action.setObjectName("contactAction")
@@ -1319,6 +1411,96 @@ class WorkbenchWindow(QMainWindow):
         help_menu.addAction(self.contact_action)
         file_menu.aboutToShow.connect(self._update_worker_controls)
         analysis_menu.aboutToShow.connect(self._update_worker_controls)
+
+    def refresh_plugins(self) -> None:
+        try:
+            plugin = detect_hypereeg_data_conversion(
+                self.plugin_settings_store.load(HYPEREEG_SOURCE)
+            )
+        except PluginError as exc:
+            self.data_conversion_action.setEnabled(False)
+            self.data_conversion_action.setToolTip(str(exc))
+            self.hypereeg_conversion_action.setEnabled(False)
+            self.hypereeg_conversion_action.setToolTip(str(exc))
+        else:
+            self.data_conversion_action.setEnabled(True)
+            self.data_conversion_action.setToolTip(f"{plugin.name} {plugin.version}")
+            self.hypereeg_conversion_action.setEnabled(True)
+            self.hypereeg_conversion_action.setToolTip(f"{plugin.name} {plugin.version}")
+
+    def refresh_pyfnirs_plugin(self) -> None:
+        try:
+            pyfnirs_plugin = detect_pyfnirs_data_conversion(
+                self.plugin_settings_store.load(PYFNIRS_SOURCE)
+            )
+        except PluginError as exc:
+            self.pyfnirs_conversion_action.setEnabled(False)
+            self.pyfnirs_conversion_action.setToolTip(str(exc))
+        else:
+            self.pyfnirs_conversion_action.setEnabled(True)
+            self.pyfnirs_conversion_action.setToolTip(
+                f"{pyfnirs_plugin.name} {pyfnirs_plugin.version}"
+            )
+
+    def show_plugin_settings(self) -> None:
+        from .plugin_dialog import PluginSettingsDialog
+
+        dialog = PluginSettingsDialog(self.plugin_settings_store, self)
+        dialog.settings_saved.connect(self.refresh_plugins)
+        dialog.settings_saved.connect(self.refresh_pyfnirs_plugin)
+        dialog.exec()
+        self.refresh_plugins()
+        self.refresh_pyfnirs_plugin()
+        dialog.deleteLater()
+
+    def open_data_conversion(self) -> None:
+        try:
+            plugin = detect_hypereeg_data_conversion(
+                self.plugin_settings_store.load(HYPEREEG_SOURCE)
+            )
+        except PluginError as exc:
+            self.refresh_plugins()
+            QMessageBox.warning(self, "数据转换不可用", str(exc))
+            return
+        started, _pid = QProcess.startDetached(
+            plugin.program, list(plugin.arguments), str(plugin.directory)
+        )
+        if not started:
+            QMessageBox.warning(
+                self, "无法启动数据转换",
+                "请检查插件运行环境，并在“插件 → 设置”中重新选择目录或 Python 程序。",
+            )
+
+    def open_pyfnirs_data_conversion(self) -> None:
+        try:
+            plugin = detect_pyfnirs_data_conversion(
+                self.plugin_settings_store.load(PYFNIRS_SOURCE)
+            )
+        except PluginError as exc:
+            self.refresh_pyfnirs_plugin()
+            QMessageBox.warning(self, "PYfNIRs 转换不可用", str(exc))
+            return
+        started, _pid = QProcess.startDetached(
+            plugin.program, list(plugin.arguments), str(plugin.directory)
+        )
+        if not started:
+            QMessageBox.warning(
+                self,
+                "无法启动 PYfNIRs 转换器",
+                "请检查 PYfNIRs 专用发行目录与真实启动文件，并在“插件 → 设置…”中重新选择。",
+            )
+
+    def show_environment_check(self) -> None:
+        first_open = self._environment_dialog is None
+        if self._environment_dialog is None:
+            from .environment_dialog import EnvironmentCheckDialog
+
+            self._environment_dialog = EnvironmentCheckDialog(self)
+        self._environment_dialog.show()
+        self._environment_dialog.raise_()
+        self._environment_dialog.activateWindow()
+        if first_open:
+            self._environment_dialog.start_check()
 
     def open_contact_issue(self) -> None:
         if not QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL)):
@@ -1945,6 +2127,23 @@ class WorkbenchWindow(QMainWindow):
             raise ValueError(f"当前任务没有可运行的模型：{config.model_id}")
         self.model_combo.setCurrentIndex(model_index)
         self._refresh_parameters()
+        self._legacy_pca_config_unchanged = (
+            config.pca_components is not None
+            and config.reduction_method is None
+            and config.reduction_components is None
+        )
+        reduction_method = config.reduction_method or "pca"
+        method_index = self.reduction_method_combo.findData(reduction_method)
+        if method_index < 0:
+            raise ValueError(f"当前界面不支持降维方法：{reduction_method}")
+        self.reduction_method_combo.setCurrentIndex(method_index)
+        self.reduction_enabled_checkbox.setChecked(
+            config.pca_components is not None or config.reduction_method is not None
+        )
+        self.reduction_components_spin.setValue(
+            config.reduction_components or config.pca_components or 2
+        )
+        self._update_reduction_config_state()
         self.sequence_config_edit.setPlainText(
             json.dumps(
                 config.sequence.to_dict() if config.sequence is not None else {},
@@ -1955,6 +2154,16 @@ class WorkbenchWindow(QMainWindow):
         )
         self._split_fractions = config.split
         self.seed_spin.setValue(config.split.seed)
+        method_index = self.evaluation_method_combo.findData(
+            getattr(config.split, "strategy", "holdout")
+        )
+        self.evaluation_method_combo.setCurrentIndex(
+            method_index if method_index >= 0 else 0
+        )
+        self.evaluation_folds_spin.setValue(
+            int(getattr(config.split, "n_splits", 5))
+        )
+        self._update_evaluation_support()
         self.source_path_edit.setText(config.dataset.source_path)
         loaded = self.load_data(
             config.dataset.source_path,
@@ -2184,6 +2393,45 @@ class WorkbenchWindow(QMainWindow):
         seed_form = QFormLayout()
         seed_form.addRow("划分随机种子", self.seed_spin)
         preprocessing_layout.addLayout(seed_form)
+        self.evaluation_panel, self.evaluation_controls = create_evaluation_controls(
+            self.preprocessing_group,
+            {"evaluation_method": "holdout", "n_splits": 5},
+        )
+        preprocessing_layout.addWidget(self.evaluation_panel)
+        self.evaluation_method_combo = self.evaluation_controls["evaluation_method"]
+        self.evaluation_folds_spin = self.evaluation_controls["n_splits"]
+        self.evaluation_method_combo.currentIndexChanged.connect(
+            lambda _index=-1: self._on_evaluation_settings_changed()
+        )
+        self.evaluation_folds_spin.valueChanged.connect(
+            lambda _value: self._on_evaluation_settings_changed()
+        )
+        self.reduction_enabled_checkbox = QCheckBox("启用训练前降维（默认关闭）")
+        self.reduction_enabled_checkbox.setAccessibleName("启用训练前降维")
+        self.reduction_method_combo = QComboBox()
+        self.reduction_method_combo.setAccessibleName("训练前降维方法")
+        for method in SUPPORTED_REDUCTION_METHODS:
+            self.reduction_method_combo.addItem(REDUCTION_METHOD_LABELS[method], method)
+        self.reduction_components_spin = QSpinBox()
+        self.reduction_components_spin.setRange(1, 10000)
+        self.reduction_components_spin.setValue(2)
+        self.reduction_components_spin.setAccessibleName("降维输出维数")
+        reduction_form = QFormLayout()
+        reduction_form.addRow(self.reduction_enabled_checkbox)
+        reduction_form.addRow("降维方法", self.reduction_method_combo)
+        reduction_form.addRow("保留维数", self.reduction_components_spin)
+        preprocessing_layout.addLayout(reduction_form)
+        self.reduction_help_label = QLabel(
+            "训练前降维默认关闭。启用后，变换只在训练分区拟合，验证集、测试集和新数据复用已拟合结果。"
+        )
+        self.reduction_help_label.setObjectName("helperText")
+        self.reduction_help_label.setWordWrap(True)
+        preprocessing_layout.addWidget(self.reduction_help_label)
+
+        # Keep the old widget attributes for callers that inspect the PCA controls.
+        self.pca_enabled_checkbox = self.reduction_enabled_checkbox
+        self.pca_components_spin = self.reduction_components_spin
+        self.pca_help_label = self.reduction_help_label
         layout.addWidget(self.preprocessing_group)
 
         self.model_group = QGroupBox("2. 模型与参数")
@@ -2285,21 +2533,31 @@ class WorkbenchWindow(QMainWindow):
         self.parallel_workers_spin.setRange(1, 2)
         self.parallel_workers_spin.setValue(1)
         self.search_fits_spin = QSpinBox()
-        self.search_fits_spin.setAccessibleName("每个算法最大真实拟合次数")
+        self.search_fits_spin.setAccessibleName("每算法候选模型训练数量上限")
         self.search_fits_spin.setRange(1, 50)
-        self.search_fits_spin.setValue(1)
+        self.search_fits_spin.setValue(10)
         self.search_proposals_spin = QSpinBox()
         self.search_proposals_spin.setAccessibleName("每个算法最大搜索提案数")
         self.search_proposals_spin.setRange(1, 250)
-        self.search_proposals_spin.setValue(1)
+        self.search_proposals_spin.setValue(30)
         self.search_minutes_spin = QSpinBox()
         self.search_minutes_spin.setAccessibleName("每个算法最大运行分钟数")
         self.search_minutes_spin.setRange(1, 20)
         self.search_minutes_spin.setValue(10)
         add_resource_control("CPU 并行 worker；每个 worker 使用 1 个数值线程", self.parallel_workers_spin)
-        add_resource_control("每算法最大真实拟合次数", self.search_fits_spin)
-        add_resource_control("每算法最大搜索提案数", self.search_proposals_spin)
-        add_resource_control("每算法活动时限（分钟）", self.search_minutes_spin)
+        add_resource_control(
+            "每算法候选模型训练数量上限（不是底层拟合次数）。K 折下每个候选通常训练 K 次；"
+            "用户冻结参数后，还会额外在完整开发集拟合一次，再对独立测试集评估一次。",
+            self.search_fits_spin,
+        )
+        add_resource_control(
+            "每算法最大搜索提案数。候选数、提案数或活动时限任一先达到时停止搜索。",
+            self.search_proposals_spin,
+        )
+        add_resource_control(
+            "每算法活动时限（分钟）；取消也可以提前停止搜索。",
+            self.search_minutes_spin,
+        )
         self.acceleration_label = QLabel("CPU 模式；GPU 仅在 CUDA PyTorch 与可用设备均存在时开放给 N01。")
         self.acceleration_label.setObjectName("helperText")
         self.acceleration_label.setWordWrap(True)
@@ -2360,7 +2618,7 @@ class WorkbenchWindow(QMainWindow):
 
         self.result_export_group = QGroupBox("结果导出")
         export_layout = QVBoxLayout(self.result_export_group)
-        export_layout.addWidget(QLabel("选择要生成的多算法验证比较文件；指标来自真实完成的 validation 评估。"))
+        export_layout.addWidget(QLabel("导出单任务或多模型结果；指标和逐样本数据按实际评估方法与分区整理。"))
         format_row = QHBoxLayout()
         self.export_csv_check = QCheckBox("CSV")
         self.export_xlsx_check = QCheckBox("XLSX")
@@ -2451,6 +2709,10 @@ class WorkbenchWindow(QMainWindow):
         self.metric_canvas.setMinimumHeight(170)
         self.metric_canvas.setMaximumHeight(185)
         overview_layout.addWidget(self.metric_canvas, 3)
+        self.metric_unavailable_label = QLabel()
+        self.metric_unavailable_label.setObjectName("helperText")
+        self.metric_unavailable_label.setWordWrap(True)
+        overview_layout.addWidget(self.metric_unavailable_label)
         self.metrics_text = QPlainTextEdit()
         self.metrics_text.setReadOnly(True)
         self.metrics_text.setAccessibleName("训练、验证与测试指标")
@@ -2458,6 +2720,9 @@ class WorkbenchWindow(QMainWindow):
         self.metrics_text.setMaximumHeight(100)
         overview_layout.addWidget(self.metrics_text, 2)
         self.result_tabs.addTab(overview, "指标")
+
+        self.result_chart_page = ResultChartPage(self.result_tabs)
+        self.result_tabs.addTab(self.result_chart_page, "图表")
 
         self.sequence_summary_text = QPlainTextEdit()
         self.sequence_summary_text.setReadOnly(True)
@@ -2499,10 +2764,17 @@ class WorkbenchWindow(QMainWindow):
         self.audit_text.setMaximumHeight(115)
         artifacts_layout.addWidget(self.audit_text)
         self.result_tabs.addTab(artifacts_tab, "导出与审计")
+        # Results should open on the cache-backed chart page so the visual
+        # output is immediately visible after a run or session restore.
+        self.result_tabs.setCurrentWidget(self.result_chart_page)
+        self.result_tabs.currentChanged.connect(self._on_result_tab_changed)
         layout.addWidget(self.result_tabs, 1)
 
         self.inference_group = QGroupBox("已加载模型的推理")
-        inference_layout = QVBoxLayout(self.inference_group)
+        self.inference_group.setCheckable(True)
+        self.inference_group.setChecked(False)
+        self.inference_content = QWidget(self.inference_group)
+        inference_layout = QVBoxLayout(self.inference_content)
         model_path_row = QHBoxLayout()
         self.model_path_edit = QLineEdit()
         self.model_path_edit.setAccessibleName("待加载的 joblib 模型路径")
@@ -2542,6 +2814,11 @@ class WorkbenchWindow(QMainWindow):
         inference_options_row.addWidget(self.operation_combo, 2)
         inference_options_row.addWidget(self.inference_button, 2)
         inference_layout.addLayout(inference_options_row)
+        group_layout = QVBoxLayout(self.inference_group)
+        group_layout.addWidget(self.inference_content)
+        self.inference_content.setVisible(False)
+        self.inference_group.toggled.connect(self.inference_content.setVisible)
+        self.inference_group.setToolTip("首次进入时折叠；展开后可继续使用已加载模型和推理结果。")
         layout.addWidget(self.inference_group)
         return panel
 
@@ -2566,6 +2843,13 @@ class WorkbenchWindow(QMainWindow):
         self.advanced_parameters.textChanged.connect(self._on_configuration_changed)
         self.sequence_config_edit.textChanged.connect(self._on_sequence_config_changed)
         self.seed_spin.textChanged.connect(self._on_configuration_changed)
+        self.reduction_enabled_checkbox.toggled.connect(self._on_reduction_enabled_changed)
+        self.reduction_method_combo.currentIndexChanged.connect(
+            self._on_reduction_method_changed
+        )
+        self.reduction_components_spin.valueChanged.connect(
+            self._on_reduction_components_changed
+        )
         self.output_dir_edit.textChanged.connect(self._on_configuration_changed)
         self.output_browse_button.clicked.connect(self._browse_output_directory)
         self.run_button.clicked.connect(self._start_selected_workflow)
@@ -2593,7 +2877,7 @@ class WorkbenchWindow(QMainWindow):
             ("预处理与划分", "确认训练/验证/测试划分和随机种子。"),
             ("算法与评价", "选择一个活动模型，或勾选多个模型进入比较队列。"),
             ("资源与输出", "设置运行目录和并行资源，然后启动所选流程。"),
-            ("运行监控", "查看后台阶段、完成拟合数、已用时间和预计剩余时间。"),
+            ("运行监控", "查看后台阶段、已完成候选数、已用时间和预计剩余时间。"),
             ("结果与导出", "比较实际验证指标，并按所选格式保存结果。"),
         )
         self.wizard_title.setText(f"步骤 {step + 1} / {len(titles)} · {titles[step][0]}")
@@ -2906,6 +3190,9 @@ class WorkbenchWindow(QMainWindow):
                     split=base_config.split,
                     output_dir=None,
                     sequence=sequence,
+                    pca_components=base_config.pca_components,
+                    reduction_method=base_config.reduction_method,
+                    reduction_components=base_config.reduction_components,
                 )
                 candidate.validate()
                 try:
@@ -2957,8 +3244,18 @@ class WorkbenchWindow(QMainWindow):
         self._wizard_monitor_timer.start()
         self._set_wizard_step(4)
         self.state_label.setText("多算法搜索运行中")
+        fit_budget_note = ""
+        if self.evaluation_method_combo.currentData() == "kfold":
+            folds = self.evaluation_folds_spin.value()
+            fit_budget_note = (
+                f"；K={folds} 时每个候选通常进行 {folds} 次折内训练，"
+                "冻结参数后另做一次开发集拟合，再进行一次最终测试"
+            )
         self.result_status_label.setText(
-            f"正在验证 {len(selected_models)} 个模型；每个模型最多 {self.search_fits_spin.value()} 次真实拟合。"
+            f"正在验证 {len(selected_models)} 个模型；每个模型最多处理 "
+            f"{self.search_fits_spin.value()} 个候选模型、{self.search_proposals_spin.value()} 个提案，"
+            f"活动时限 {self.search_minutes_spin.value()} 分钟；任一预算先到即停止，取消也可提前结束"
+            f"{fit_budget_note}。"
         )
         self._set_worker_busy(True)
         started = self._start_worker(
@@ -3056,34 +3353,232 @@ class WorkbenchWindow(QMainWindow):
         frame.insert(1, "job_id", job_id)
         return frame
 
+    def _single_test_receipt_is_successful(self) -> bool:
+        receipt = self._test_result_payload
+        if not isinstance(receipt, dict) and isinstance(self.bound_result, dict):
+            receipt = self.bound_result
+        if not isinstance(receipt, dict):
+            return False
+        metrics = receipt.get("metrics")
+        audit = receipt.get("audit")
+        test = metrics.get("test") if isinstance(metrics, dict) else None
+        events = audit.get("events") if isinstance(audit, dict) else None
+        test_events = [item for item in events if isinstance(item, str) and item.startswith("test_")] \
+            if isinstance(events, list) else []
+        audit_count = audit.get("test_evaluation_count") if isinstance(audit, dict) else None
+        payload_count = receipt.get("test_evaluation_count", audit_count)
+        return (
+            isinstance(test, dict)
+            and test.get("status") != "not_supported"
+            and type(payload_count) is int and payload_count == 1
+            and type(audit_count) is int and audit_count == 1
+            and test_events == ["test_metrics_computed_once"]
+        )
+
+    def _single_result_export_context(self) -> dict[str, Any] | None:
+        bound = self.bound_result if isinstance(self.bound_result, dict) else {}
+        metrics = bound.get("metrics") if isinstance(bound.get("metrics"), dict) else self.current_metrics
+        if not isinstance(metrics, dict):
+            return None
+        cv = metrics.get("cv")
+        is_cv = isinstance(cv, dict) and cv.get("strategy") == "kfold"
+        metric_rows: list[dict[str, Any]] = []
+        partition_sources: dict[str, str] = {}
+        if is_cv:
+            selection_metrics = metrics.get("selection_validation")
+            if not isinstance(selection_metrics, dict):
+                selection_metrics = cv.get("fold_metric_mean")
+            if isinstance(selection_metrics, dict):
+                metric_rows.append({
+                    "partition": "selection_validation_mean",
+                    "source": str(cv.get("validation_source") or "cv_fold_mean"),
+                    "metrics": selection_metrics,
+                })
+            fold_std = cv.get("fold_metric_std_ddof1")
+            if isinstance(fold_std, dict):
+                metric_rows.append({
+                    "partition": "fold_metric_std_ddof1",
+                    "source": "cv_fold_std_ddof1",
+                    "metrics": fold_std,
+                })
+            oof_metrics = metrics.get("oof")
+            if not isinstance(oof_metrics, dict):
+                oof_metrics = cv.get("oof_metrics")
+            if isinstance(oof_metrics, dict):
+                metric_rows.append({
+                    "partition": "oof",
+                    "source": str(cv.get("oof_source") or "cv_oof"),
+                    "metrics": oof_metrics,
+                })
+            partition_sources.update({
+                "oof": str(cv.get("oof_source") or "cv_oof"),
+                "test": "test_receipt",
+            })
+            sample_partitions = ("oof",)
+            k = cv.get("n_splits", cv.get("folds"))
+            if isinstance(k, bool) or not isinstance(k, int) or not 2 <= k <= 10:
+                k = None
+            method = "kfold"
+        else:
+            validation_metrics = metrics.get("validation")
+            if isinstance(validation_metrics, dict):
+                metric_rows.append({
+                    "partition": "validation",
+                    "source": "holdout_validation",
+                    "metrics": validation_metrics,
+                })
+            partition_sources.update({
+                "validation": "holdout_validation",
+                "test": "test_receipt",
+            })
+            sample_partitions = ("validation",)
+            k = None
+            method = "holdout"
+
+        test_metrics = metrics.get("test")
+        test_receipt = self._single_test_receipt_is_successful()
+        if test_receipt and isinstance(test_metrics, dict):
+            metric_rows.append({
+                "partition": "test",
+                "source": "test_receipt",
+                "metrics": test_metrics,
+            })
+            sample_partitions = (*sample_partitions, "test")
+        if not metric_rows:
+            return None
+        return {
+            "metrics": metrics,
+            "method": method,
+            "k": k,
+            "metric_rows": metric_rows,
+            "sample_partitions": sample_partitions,
+            "partition_sources": partition_sources,
+            "test_receipt": test_receipt,
+            "job_id": str(bound.get("frozen_config_sha256") or self._prepared_signature or "single-run")[:12],
+        }
+
+    @staticmethod
+    def _plot_source_sample_frame(source: Any) -> pd.DataFrame:
+        positions = getattr(source, "row_positions", ())
+        if not positions:
+            return pd.DataFrame()
+        frame = pd.DataFrame({"split": [str(getattr(source, "partition", ""))] * len(positions),
+                              "row_position": [int(value) for value in positions]})
+        names = {
+            "classification.y_true": "y_true",
+            "classification.y_pred": "y_pred",
+            "regression.y_true": "y_true",
+            "regression.y_pred": "y_pred",
+        }
+        for column in getattr(source, "outputs", ()):
+            column_id = str(getattr(column, "column_id", ""))
+            label = names.get(column_id, str(getattr(column, "label", "")))
+            if label:
+                frame[label] = list(column.values)
+        return frame
+
+    @staticmethod
+    def _join_plot_scores(frame: pd.DataFrame, source: Any) -> pd.DataFrame:
+        score_cache = getattr(source, "score_cache", None)
+        if score_cache is None or "row_position" not in frame.columns:
+            return frame
+        positions = tuple(int(value) for value in score_cache.row_positions)
+        class_order = list(score_cache.class_order)
+        column_map = [
+            {"column_index": int(index), "class_label": label}
+            for index, label in score_cache.score_column_map
+        ]
+        score_rows: list[dict[str, Any]] = []
+        for row_position, values in zip(positions, score_cache.values):
+            row: dict[str, Any] = {
+                "row_position": row_position,
+                "score_type": score_cache.score_type,
+                "score_semantics": score_cache.semantics,
+                "class_order_json": json.dumps(class_order, ensure_ascii=False, default=str),
+                "score_column_map_json": json.dumps(column_map, ensure_ascii=False, default=str),
+            }
+            for column_index, _label in score_cache.score_column_map:
+                row[f"score_{int(column_index) + 1}"] = float(values[int(column_index)])
+            score_rows.append(row)
+        scores = pd.DataFrame(score_rows)
+        joined = frame.copy()
+        joined["row_position"] = pd.to_numeric(joined["row_position"], errors="coerce").astype("Int64")
+        if joined["row_position"].isna().any():
+            raise ValueError("逐样本结果缺少有效的稳定 row_position")
+        return joined.merge(scores, on="row_position", how="left", validate="one_to_one")
+
+    def _single_sample_results_frame(self, context: dict[str, Any], *, model_id: str) -> pd.DataFrame:
+        raw = pd.DataFrame()
+        results_path = self.artifact_paths.get("results_csv")
+        if results_path and Path(results_path).is_file():
+            raw = pd.read_csv(results_path)
+        partition_column = next((name for name in ("split", "partition") if name in raw.columns), None)
+        frames: list[pd.DataFrame] = []
+        job_id = context["job_id"]
+        for partition in context["sample_partitions"]:
+            source = self._session_plot_sources.get(partition)
+            if source is not None and getattr(source, "partition", None) != partition:
+                source = None
+            frame = pd.DataFrame()
+            if partition_column is not None:
+                frame = raw.loc[
+                    raw[partition_column].astype(str).str.casefold() == partition
+                ].copy()
+                if not frame.empty and "row_position" in frame.columns:
+                    if partition_column != "split":
+                        frame["split"] = partition
+                else:
+                    frame = pd.DataFrame()
+            if frame.empty and source is not None:
+                frame = self._plot_source_sample_frame(source)
+            if frame.empty or "row_position" not in frame.columns:
+                continue
+            if source is not None:
+                frame = self._join_plot_scores(frame, source)
+            frame["partition"] = partition
+            frame["evaluation_method"] = context["method"]
+            frame["K"] = context["k"]
+            frame["source"] = context["partition_sources"][partition]
+            frame.insert(0, "model_id", model_id)
+            frame.insert(1, "job_id", job_id)
+            positions = pd.to_numeric(frame["row_position"], errors="coerce")
+            if positions.isna().any() or positions.duplicated().any():
+                raise ValueError(f"{partition} 逐样本结果的 row_position 缺失或重复")
+            frame["row_position"] = positions.astype("int64")
+            frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        result = pd.concat(frames, ignore_index=True, sort=False)
+        order = {name: index for index, name in enumerate(context["sample_partitions"])}
+        result["_partition_order"] = result["partition"].map(order)
+        result = result.sort_values(["_partition_order", "row_position"], kind="stable")
+        return result.drop(columns=["_partition_order"]).reset_index(drop=True)
+
     def export_wizard_comparison(self) -> bool:
         payload = self._batch_run_payload
         outcomes = payload.get("outcomes") if isinstance(payload, dict) else None
         batch_mode = isinstance(outcomes, list)
-        bound_metrics = self.bound_result.get("metrics", {}) if isinstance(self.bound_result, dict) else {}
-        validation_metrics = bound_metrics.get("validation") if isinstance(bound_metrics, dict) else None
-        single_mode = not batch_mode and isinstance(validation_metrics, dict)
+        single_context = None if batch_mode else self._single_result_export_context()
+        bound_metrics = single_context.get("metrics", {}) if single_context else {}
+        single_mode = not batch_mode and single_context is not None
         if not batch_mode and not single_mode:
             self.result_status_label.setText("当前没有已完成的验证结果可导出。")
             return False
 
-        formats = {
+        initial_formats = {
             "csv": self.export_csv_check.isChecked(),
             "xlsx": self.export_xlsx_check.isChecked(),
             "json": self.export_json_check.isChecked(),
             "html": self.export_html_check.isChecked(),
         }
-        contents = {
+        initial_contents = {
             "predictions": self.export_predictions_check.isChecked(),
             "model": self.export_model_check.isChecked(),
             "charts": self.export_charts_check.isChecked(),
         }
-        if not any(formats.values()):
-            self.result_status_label.setText("请至少选择一种导出格式。")
-            return False
         selected_metric_names = self._wizard_selected_metrics or self._selected_validation_metrics()
         if not selected_metric_names:
-            self.result_status_label.setText("请至少勾选一种 validation 指标。")
+            self.result_status_label.setText("请至少勾选一种评估指标。")
             return False
 
         rows: list[dict[str, Any]] = []
@@ -3091,7 +3586,9 @@ class WorkbenchWindow(QMainWindow):
         session_assets: dict[str, Any] = {}
         prediction_frames: list[pd.DataFrame] = []
         single_model_source: Path | None = None
-        single_predictions_source: Path | None = None
+        sample_results_available = False
+        model_export_available = True
+        model_unavailable_reason = ""
         if batch_mode:
             if self._wizard_batch_directory is None:
                 self.result_status_label.setText("多模型结果缺少工作目录，无法安全读取已保存结果。")
@@ -3125,77 +3622,74 @@ class WorkbenchWindow(QMainWindow):
                     "parameters": outcome.get("winner_parameters") or {},
                     "error": outcome.get("error"),
                 })
-            if contents["model"] or contents["predictions"]:
-                try:
-                    from .batch import load_search_result
+            try:
+                from .batch import load_search_result
 
-                    history_path = self._wizard_batch_directory / "history.sqlite3"
-                    for outcome in completed_outcomes:
-                        job_id = str(outcome.get("job_id") or "")
-                        result = load_search_result(history_path, job_id)
-                        if result is None or result.winner_session is None:
-                            raise ValueError(f"模型 {outcome.get('model_id')} 缺少已保存的 validation session")
-                        session_assets[job_id] = result.winner_session
-                        if contents["predictions"]:
-                            frame = self._validation_rows_frame(
-                                result.winner_session.rows,
-                                model_id=str(outcome.get("model_id") or "model"),
-                                job_id=job_id,
-                            )
-                            if not frame.empty:
-                                prediction_frames.append(frame)
-                except Exception as exc:
-                    self.result_status_label.setText(f"无法读取已保存的获胜模型结果：{exc}")
-                    return False
+                history_path = self._wizard_batch_directory / "history.sqlite3"
+                for outcome in completed_outcomes:
+                    job_id = str(outcome.get("job_id") or "")
+                    result = load_search_result(history_path, job_id)
+                    if result is None or result.winner_session is None:
+                        raise ValueError(f"模型 {outcome.get('model_id')} 缺少已保存的 validation session")
+                    winner_session = result.winner_session
+                    session_assets[job_id] = winner_session
+                    if (getattr(winner_session, "fit_scope", None) == "cv_development"
+                            or getattr(winner_session, "fitted_model", None) is None):
+                        model_export_available = False
+                        model_unavailable_reason = (
+                            "CV 折外评估 session 尚未冻结开发集最终模型；完成冻结和 refit 后才能导出模型文件。"
+                        )
+                    frame = self._validation_rows_frame(
+                        winner_session.rows,
+                        model_id=str(outcome.get("model_id") or "model"),
+                        job_id=job_id,
+                    )
+                    if not frame.empty:
+                        prediction_frames.append(frame)
+                sample_results_available = (
+                    bool(completed_outcomes)
+                    and len(prediction_frames) == len(completed_outcomes)
+                )
+            except Exception as exc:
+                self.result_status_label.setText(f"无法读取已保存的获胜模型结果：{exc}")
+                return False
         else:
             model_id = str(self.model_combo.currentData() or "model")
             task = str(self.task_combo.currentData() or "")
-            job_id = str((self.bound_result or {}).get("frozen_config_sha256", "single-run"))[:12]
-            rows = [{
-                "job_id": job_id,
-                "status": "finalized",
-                "task": task,
-                "model_id": model_id,
-                "objective": None,
-                "winner_trial_id": None,
-                "actual_fit_count": 1,
-                "proposal_count": 1,
-                "elapsed_seconds": None,
-                "metrics": {name: validation_metrics.get(name) for name in selected_metric_names},
-                "parameters": {},
-                "error": None,
-            }]
-            if contents["model"]:
-                model_path = self.artifact_paths.get("model")
-                if not model_path or not Path(model_path).is_file():
-                    self.result_status_label.setText("当前单模型结果没有可复制的模型文件。")
-                    return False
+            job_id = single_context["job_id"]
+            rows = [
+                {
+                    "job_id": job_id,
+                    "status": "finalized" if single_context["test_receipt"] else "validation_completed",
+                    "task": task,
+                    "model_id": model_id,
+                    "evaluation_method": single_context["method"],
+                    "K": single_context["k"],
+                    "source": entry["source"],
+                    "partition": entry["partition"],
+                    "metrics": {name: entry["metrics"].get(name) for name in selected_metric_names},
+                    "parameters": {},
+                }
+                for entry in single_context["metric_rows"]
+            ]
+            model_path = self.artifact_paths.get("model")
+            if model_path and Path(model_path).is_file():
                 single_model_source = Path(model_path)
-            if contents["predictions"]:
-                results_path = self.artifact_paths.get("results_csv")
-                if not results_path or not Path(results_path).is_file():
-                    self.result_status_label.setText("当前单模型结果没有逐样本结果 CSV。")
-                    return False
-                try:
-                    results_frame = pd.read_csv(results_path)
-                except Exception as exc:
-                    self.result_status_label.setText(f"无法读取单模型逐样本结果：{exc}")
-                    return False
-                if "split" in results_frame.columns:
-                    results_frame = results_frame.loc[
-                        results_frame["split"].astype(str).str.casefold() == "validation"
-                    ].copy()
-                results_frame.insert(0, "model_id", model_id)
-                results_frame.insert(1, "job_id", job_id)
-                if not results_frame.empty:
-                    prediction_frames.append(results_frame)
-
-        if contents["predictions"] and not prediction_frames:
-            self.result_status_label.setText("所選模型沒有可導出的逐样本 validation 结果。")
-            return False
-        if contents["charts"] and not selected_metric_names:
-            self.result_status_label.setText("生成比较图前请勾选至少一种 validation 指标。")
-            return False
+            model_export_available = single_model_source is not None
+            if not model_export_available and single_context["method"] == "kfold":
+                model_unavailable_reason = (
+                    "当前 CV 结果尚无已导出的开发集 refit 模型；模型文件选项会在模型产物存在后启用。"
+                )
+            elif not model_export_available:
+                model_unavailable_reason = "当前 session 尚无可复制的模型产物；导出不会触发拟合或测试。"
+            try:
+                sample_frame = self._single_sample_results_frame(single_context, model_id=model_id)
+            except Exception as exc:
+                self.result_status_label.setText(f"无法读取单任务逐样本结果：{exc}")
+                return False
+            if not sample_frame.empty:
+                prediction_frames.append(sample_frame)
+                sample_results_available = True
 
         if batch_mode:
             output_base = self._wizard_batch_directory / "exports"
@@ -3203,10 +3697,49 @@ class WorkbenchWindow(QMainWindow):
             output_directory = self.artifact_paths.get("output_dir")
             output_base = Path(output_directory) if output_directory else Path.cwd()
             output_base = output_base / "wizard_exports"
+
+        available_formats = tuple(name for name, selected in initial_formats.items() if selected)
+        initial_request = ExportRequest(
+            format_id=available_formats[0] if available_formats else "",
+            format_ids=available_formats,
+            output_directory=output_base,
+            include_sample_results=(initial_contents["predictions"] and bool(prediction_frames)),
+            include_model=(initial_contents["model"] and model_export_available),
+            include_comparison_png=initial_contents["charts"],
+            timestamp_subdirectory=True,
+        )
         export_name = f"comparison_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
-        target = output_base / export_name
-        try:
-            target.mkdir(parents=True, exist_ok=False)
+
+        def target_for_request(request: ExportRequest) -> Path:
+            directory = request.output_directory.expanduser().resolve()
+            if directory.exists() and not directory.is_dir():
+                raise ValueError("选择的保存位置已存在，但不是文件夹。")
+            target = directory / export_name if request.timestamp_subdirectory else directory
+            if target.exists() and not target.is_dir():
+                raise ValueError("预览的导出目标已存在，但不是文件夹。")
+            if request.timestamp_subdirectory and target.exists():
+                raise FileExistsError(f"预览的唯一导出目录已存在：{target}")
+            return target.resolve()
+
+        exported_paths: dict[str, str] = {}
+        exported_request: ExportRequest | None = None
+
+        def export_request(request: ExportRequest) -> Path:
+            nonlocal exported_request
+            formats = {name: name in request.selected_formats for name in initial_formats}
+            contents = {
+                "predictions": request.include_sample_results,
+                "model": request.include_model,
+                "charts": request.include_comparison_png,
+            }
+            if not any(formats.values()):
+                raise ValueError("请至少选择一种导出格式。")
+            if contents["predictions"] and not prediction_frames:
+                raise ValueError("当前结果没有可导出的逐样本评估结果。")
+            if contents["model"] and not model_export_available:
+                raise ValueError(model_unavailable_reason or "当前 session 没有可导出的最终模型。")
+
+            target = target_for_request(request)
             paths: dict[str, str] = {}
             table_rows = []
             for row in rows:
@@ -3215,6 +3748,80 @@ class WorkbenchWindow(QMainWindow):
                 flat["parameters_json"] = json.dumps(row["parameters"], ensure_ascii=False, sort_keys=True, allow_nan=False)
                 table_rows.append(flat)
             frame = pd.DataFrame(table_rows)
+            chart_specs: list[tuple[str, list[str], list[float]]] = []
+            chart_errors: dict[str, list[float]] = {}
+            if contents["charts"]:
+                for metric in selected_metric_names:
+                    values: list[float] = []
+                    labels: list[str] = []
+                    errors: list[float] = []
+                    if single_mode:
+                        std_entry = next((
+                            entry for entry in single_context["metric_rows"]
+                            if entry["partition"] == "fold_metric_std_ddof1"
+                        ), None)
+                        chart_entries = [
+                            entry for entry in single_context["metric_rows"]
+                            if entry["partition"] in {
+                                "selection_validation_mean", "oof", "validation", "test"
+                            }
+                        ]
+                        display_labels = {
+                            "selection_validation_mean": f"K={single_context['k']} 折均值",
+                            "oof": "OOF",
+                            "validation": "验证集",
+                            "test": "最终测试",
+                        }
+                        for entry in chart_entries:
+                            value = entry["metrics"].get(metric)
+                            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
+                                labels.append(display_labels[entry["partition"]])
+                                values.append(float(value))
+                                error_value = std_entry["metrics"].get(metric) if (
+                                    entry["partition"] == "selection_validation_mean" and std_entry is not None
+                                ) else 0.0
+                                errors.append(
+                                    float(error_value)
+                                    if isinstance(error_value, (int, float)) and not isinstance(error_value, bool)
+                                    and math.isfinite(float(error_value)) else 0.0
+                                )
+                    else:
+                        for row in rows:
+                            value = row.get("metrics", {}).get(metric)
+                            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
+                                labels.append(str(row.get("model_id") or "model"))
+                                values.append(float(value))
+                    if values:
+                        safe_metric = re.sub(r"[^A-Za-z0-9_.-]+", "_", metric)
+                        chart_specs.append((safe_metric, labels, values))
+                        if errors and any(value > 0 for value in errors):
+                            chart_errors[safe_metric] = errors
+                if not chart_specs:
+                    raise ValueError("所选评估指标没有可绘制的数值")
+
+            planned_names = ["export-manifest.json"]
+            planned_names.extend(
+                {
+                    "csv": "model-comparison.csv",
+                    "xlsx": "model-comparison.xlsx",
+                    "json": "model-comparison.json",
+                    "html": "model-comparison.html",
+                }[format_id]
+                for format_id in request.selected_formats
+            )
+            sample_filename = "sample-results.csv" if single_mode else "validation-predictions.csv"
+            if contents["predictions"]:
+                planned_names.append(sample_filename)
+            if contents["model"]:
+                planned_names.append("models")
+            planned_names.extend(f"comparison-{metric}.png" for metric, _labels, _values in chart_specs)
+            if target.exists():
+                collisions = [name for name in planned_names if (target / name).exists()]
+                if request.timestamp_subdirectory or collisions:
+                    details = ", ".join(collisions) if collisions else str(target)
+                    raise FileExistsError(f"拒绝覆盖已有导出内容：{details}")
+            target.mkdir(parents=True, exist_ok=not request.timestamp_subdirectory)
+
             if formats["csv"]:
                 path = target / "model-comparison.csv"
                 frame.to_csv(path, index=False, encoding="utf-8-sig")
@@ -3230,21 +3837,32 @@ class WorkbenchWindow(QMainWindow):
             if formats["html"]:
                 path = target / "model-comparison.html"
                 safe_table = frame.to_html(index=False, escape=True, border=0)
+                if single_mode and single_context["method"] == "kfold":
+                    html_summary = (
+                        f"K={single_context['k']} 折均值与折间标准差用于模型比较；另列开发集 OOF 汇总。"
+                        "独立测试集仅在冻结参数后评估一次。"
+                    )
+                elif single_mode and single_context["test_receipt"]:
+                    html_summary = "结果分别列出验证集指标和冻结参数后的最终测试指标。"
+                elif single_mode:
+                    html_summary = "指标来自当前模型的真实 validation 验证；最终测试尚未完成。"
+                else:
+                    html_summary = "指标来自真实 validation 评估；搜索未读取测试集。"
                 path.write_text(
                     "<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>模型验证比较</title>"
                     "<style>body{font:15px Segoe UI,Arial,sans-serif;margin:2rem;color:#0f172a}"
                     "table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:.5rem;text-align:left}"
                     "th{background:#eff6ff}</style><h1>模型验证比较</h1>"
-                    "<p>指标来自真实 validation 评估；搜索未读取测试集。</p>" + safe_table + "</html>",
+                    f"<p>{html_summary}</p>" + safe_table + "</html>",
                     encoding="utf-8",
                 )
                 paths["comparison_html"] = str(path)
             if contents["predictions"]:
-                path = target / "validation-predictions.csv"
+                path = target / sample_filename
                 pd.concat(prediction_frames, ignore_index=True, sort=False).to_csv(
                     path, index=False, encoding="utf-8-sig"
                 )
-                paths["validation_predictions_csv"] = str(path)
+                paths["sample_results_csv" if single_mode else "validation_predictions_csv"] = str(path)
             if contents["model"]:
                 model_directory = target / "models"
                 model_directory.mkdir()
@@ -3257,7 +3875,11 @@ class WorkbenchWindow(QMainWindow):
                         safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", model_id)
                         trial_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(outcome.get("winner_trial_id") or "winner"))[:12]
                         path = model_directory / f"{safe_id}-{job_id[:8]}-{trial_id}.joblib"
-                        fitted_model = session_assets[job_id].fitted_model
+                        winner_session = session_assets[job_id]
+                        if (getattr(winner_session, "fit_scope", None) == "cv_development"
+                                or getattr(winner_session, "fitted_model", None) is None):
+                            raise ValueError(model_unavailable_reason or "CV session 尚未 refit，不能导出最终模型。")
+                        fitted_model = winner_session.fitted_model
                         if model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
                             export_extended_model(fitted_model, path)
                         else:
@@ -3270,49 +3892,86 @@ class WorkbenchWindow(QMainWindow):
                     shutil.copy2(single_model_source, path)
                     paths[f"model_{safe_id}"] = str(path)
             if contents["charts"]:
-                for metric in selected_metric_names:
-                    values = []
-                    labels = []
-                    for row in rows:
-                        value = row.get("metrics", {}).get(metric)
-                        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
-                            labels.append(str(row.get("model_id") or "model"))
-                            values.append(float(value))
-                    if not values:
-                        continue
+                for metric, labels, values in chart_specs:
                     chart = Figure(figsize=(7.2, 4.2), tight_layout=True)
                     axes = chart.subplots()
-                    axes.bar(labels, values, color="#2563EB")
-                    axes.set_title(f"实际验证 {metric}")
+                    axes.bar(labels, values, color="#2563EB", yerr=chart_errors.get(metric), capsize=4)
+                    axes.set_title(f"评估分区比较 {metric}" if single_mode else f"实际验证 {metric}")
                     axes.set_ylabel(metric)
                     axes.tick_params(axis="x", rotation=25)
-                    safe_metric = re.sub(r"[^A-Za-z0-9_.-]+", "_", metric)
-                    path = target / f"comparison-{safe_metric}.png"
+                    path = target / f"comparison-{metric}.png"
                     chart.savefig(path, dpi=160)
-                    paths[f"chart_{safe_metric}"] = str(path)
+                    paths[f"chart_{metric}"] = str(path)
                     chart.clear()
-            if contents["charts"] and not any(name.startswith("chart_") for name in paths):
-                raise ValueError("所选 validation 指标没有可绘制的数值")
             manifest_path = target / "export-manifest.json"
-            manifest_path.write_text(json.dumps({
-                "scope": "validation",
+            manifest = {
+                "scope": "single_result" if single_mode else "validation",
                 "selected_metrics": selected_metric_names,
                 "formats": formats,
                 "contents": contents,
                 "files": paths,
-            }, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+            }
+            if single_mode:
+                manifest["evaluation"] = {
+                    "method": single_context["method"],
+                    "K": single_context["k"],
+                    "sources": [entry["source"] for entry in single_context["metric_rows"]],
+                    "partitions": [entry["partition"] for entry in single_context["metric_rows"]],
+                }
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8"
+            )
             paths["export_manifest"] = str(manifest_path)
+            exported_paths.update(paths)
+            exported_request = request
+            return target
+
+        try:
+            exported_path = run_export_dialog(
+                self,
+                initial_request,
+                target_for_request,
+                export_request,
+                allow_sample_results=sample_results_available,
+                sample_results_reason="当前 session 没有可核验的逐样本分区缓存。",
+                allow_model=model_export_available,
+                model_reason=model_unavailable_reason,
+            )
         except Exception as exc:
-            self.result_status_label.setText(f"导出失败：{exc}；已生成内容保存在 {target}")
+            self.result_status_label.setText(f"导出失败：{exc}")
+            return False
+        if exported_path is None:
+            self.result_status_label.setText("已取消导出；没有创建文件。")
             return False
 
-        self.artifact_paths.update(paths)
+        if exported_request is None:
+            self.result_status_label.setText("导出已结束，但没有记录最终选项。")
+            return False
+        formats = {name: name in exported_request.selected_formats for name in initial_formats}
+        contents = {
+            "predictions": exported_request.include_sample_results,
+            "model": exported_request.include_model,
+            "charts": exported_request.include_comparison_png,
+        }
+        # The dialog owns the final choices; mirror them in the visible controls for the next export.
+        for format_id, checkbox in (
+            ("csv", self.export_csv_check),
+            ("xlsx", self.export_xlsx_check),
+            ("json", self.export_json_check),
+            ("html", self.export_html_check),
+        ):
+            checkbox.setChecked(formats[format_id])
+        self.export_predictions_check.setChecked(contents["predictions"])
+        self.export_model_check.setChecked(contents["model"])
+        self.export_charts_check.setChecked(contents["charts"])
+
+        self.artifact_paths.update(exported_paths)
         self.artifacts_list.clear()
-        for name, path in paths.items():
+        for name, path in exported_paths.items():
             item = QListWidgetItem(f"{name} · {Path(path).name}")
             item.setData(Qt.ItemDataRole.UserRole, path)
             self.artifacts_list.addItem(item)
-        self.result_status_label.setText(f"已导出 {len(paths)} 个所选结果文件到 {target}")
+        self.result_status_label.setText(f"已导出 {len(exported_paths)} 个所选结果文件到 {exported_path}")
         self.state_label.setText("验证结果已导出")
         return True
 
@@ -3427,6 +4086,7 @@ class WorkbenchWindow(QMainWindow):
         self.model_combo.blockSignals(False)
         self._refresh_parameters()
         self._update_sequence_config_state()
+        self._update_reduction_config_state()
         self._refresh_algorithm_choices()
 
     def _clear_form_layout(self, layout: QFormLayout) -> None:
@@ -3727,9 +4387,16 @@ class WorkbenchWindow(QMainWindow):
             except Exception as exc:
                 unavailable["loaded dataset"] = str(exc)
         sources.extend(self._session_plot_sources.values())
-        for partition in ("train", "validation", "test"):
-            if partition not in self._session_plot_sources and self.bound_result is not None:
-                unavailable.setdefault(partition, f"本次 session 没有可用的 {partition} 缓存。")
+        if self._session_id is not None or self.bound_result is not None:
+            partitions = (
+                ("oof", "test")
+                if self.evaluation_method_combo.currentData() == "kfold"
+                else ("train", "validation", "test")
+            )
+            for partition in partitions:
+                if partition not in self._session_plot_sources:
+                    label = PARTITION_LABELS.get(partition, partition)
+                    unavailable.setdefault(partition, f"本次 session 没有可用的 {label} 缓存。")
         if not sources:
             self.result_status_label.setText("没有可用于绘图的已加载数据或本次任务缓存。")
             return None
@@ -3752,9 +4419,39 @@ class WorkbenchWindow(QMainWindow):
         dialog.activateWindow()
         return dialog
 
+    def _on_result_tab_changed(self, _index: int) -> None:
+        if self._result_tabs_programmatic_change:
+            return
+        self._result_tabs_user_interacted = True
+        self._result_chart_autoselect_pending = False
+
+    def _add_or_select_result_chart_tab(self, *, has_cached_results: bool) -> int:
+        index = add_or_select_result_chart_tab(
+            self.result_tabs,
+            self.result_chart_page,
+            has_cached_results=False,
+        )
+        if (
+            has_cached_results
+            and self._result_chart_autoselect_pending
+            and not self._result_tabs_user_interacted
+        ):
+            self._result_tabs_programmatic_change = True
+            try:
+                self.result_tabs.setCurrentIndex(index)
+            finally:
+                self._result_tabs_programmatic_change = False
+            self._result_chart_autoselect_pending = False
+        return index
+
     def _capture_session_plot_sources(self) -> None:
         if self._session_file_path is None or self._session_id is None or self._prepared_signature is None:
             self._session_plot_sources = {}
+            if hasattr(self, "result_chart_page"):
+                self.result_chart_page.refresh_sources(())
+                self._add_or_select_result_chart_tab(
+                    has_cached_results=bool(self.current_metrics),
+                )
             return
         try:
             from .plot_cache import load_single_session_plot_sources
@@ -3765,10 +4462,26 @@ class WorkbenchWindow(QMainWindow):
                 frozen_config_sha256=self._prepared_signature,
             )
             self._session_plot_sources = collection.by_partition()
+            model_id = str(self.model_combo.currentData() or "model")
+            model_label = self.model_combo.currentText().strip() or model_id
+            self.result_chart_page.refresh_sources(
+                tuple(
+                    ChartSourceChoice("single-run", model_label, source)
+                    for source in self._session_plot_sources.values()
+                )
+            )
+            self._add_or_select_result_chart_tab(
+                has_cached_results=bool(self.current_metrics or self._session_plot_sources),
+            )
             for partition, reason in collection.unavailable:
-                self._append_log(f"结果图 {partition} 分区不可用：{reason}")
+                self._append_log(f"结果图 {PARTITION_LABELS.get(partition, partition)} 分区不可用：{reason}")
         except Exception as exc:
             self._session_plot_sources = {}
+            if hasattr(self, "result_chart_page"):
+                self.result_chart_page.refresh_sources(())
+                self._add_or_select_result_chart_tab(
+                    has_cached_results=bool(self.current_metrics),
+                )
             self._append_log(f"未能在清理 session 前复制结果图缓存：{exc}")
 
     @staticmethod
@@ -3820,6 +4533,19 @@ class WorkbenchWindow(QMainWindow):
                 raise ValueError("结果目录不能覆盖输入文件或其父目录")
             if output_path.exists() and (not output_path.is_dir() or any(output_path.iterdir())):
                 raise ValueError("结果目录必须不存在或为空；为避免覆盖，请选择一个新目录")
+        reduction_enabled = self.reduction_enabled_checkbox.isChecked()
+        reduction_method = (
+            str(self.reduction_method_combo.currentData() or "pca")
+            if reduction_enabled else None
+        )
+        reduction_components = (
+            self.reduction_components_spin.value() if reduction_enabled else None
+        )
+        keep_legacy_pca = (
+            reduction_enabled
+            and reduction_method == "pca"
+            and self._legacy_pca_config_unchanged
+        )
         config = ExperimentConfig(
             dataset=DatasetConfig(
                 source_path=self.dataset.source_path,
@@ -3837,9 +4563,22 @@ class WorkbenchWindow(QMainWindow):
                 train_fraction=self._split_fractions.train_fraction,
                 validation_fraction=self._split_fractions.validation_fraction,
                 test_fraction=self._split_fractions.test_fraction,
+                strategy=str(self.evaluation_method_combo.currentData() or "holdout"),
+                n_splits=self.evaluation_folds_spin.value(),
             ),
             output_dir=output_dir,
             sequence=sequence,
+            pca_components=(
+                reduction_components
+                if keep_legacy_pca
+                else None
+            ),
+            reduction_method=(
+                None if keep_legacy_pca else reduction_method
+            ),
+            reduction_components=(
+                None if keep_legacy_pca else reduction_components
+            ),
         )
         config.validate()
         return config
@@ -4634,6 +5373,7 @@ class WorkbenchWindow(QMainWindow):
         self.received_events = [str(item) for item in payload.get("events", self.received_events)]
         self.current_metrics = dict(metrics)
         self.training_curves = payload.get("training_curves")
+        self.export_comparison_button.setEnabled(self._single_result_export_context() is not None)
         if self._checkpoint_payload is not None:
             self._write_single_checkpoint({
                 **self._checkpoint_payload,
@@ -4645,6 +5385,7 @@ class WorkbenchWindow(QMainWindow):
         self._render_sequence_summary(payload.get("sequence_summary"))
         self._render_metrics()
         self._render_training_curves()
+        self._capture_session_plot_sources()
         self.finalize_button.setText("冻结模型设置")
         self.result_status_label.setText("训练与验证已完成。模型尚未冻结，最终测试集尚未读取。")
         self.state_label.setText("验证完成 · 等待冻结")
@@ -4661,8 +5402,17 @@ class WorkbenchWindow(QMainWindow):
             self.result_status_label.setText(self.last_error)
             self._finalize_requested = False
             return
+        capabilities = payload.get("capabilities")
+        if isinstance(capabilities, dict):
+            self._session_capabilities = {str(key): bool(value) for key, value in capabilities.items()}
+        elif self.evaluation_method_combo.currentData() == "kfold":
+            self.last_error = "CV refit 冻结回执缺少最终模型能力，无法安全验证测试计数"
+            self.result_status_label.setText(self.last_error)
+            self._finalize_requested = False
+            return
         self._frozen = True
         self._finalize_requested = False
+        self._capture_session_plot_sources()
         if self._checkpoint_payload is not None:
             self._write_single_checkpoint({
                 **self._checkpoint_payload,
@@ -4779,6 +5529,7 @@ class WorkbenchWindow(QMainWindow):
         self.current_metrics = dict(payload.get("metrics", self.current_metrics))
         self._render_metrics()
         self._render_training_curves()
+        self._capture_session_plot_sources()
         self._render_audit(payload.get("audit", {}))
         self._append_log(f"最终测试响应已缓存（cached={payload.get('cached', False)}）；准备导出产物。")
         self.finalize_button.setEnabled(False)
@@ -4925,9 +5676,7 @@ class WorkbenchWindow(QMainWindow):
             "audit": payload.get("audit", {}),
             "artifact_paths": self.artifact_paths,
         }
-        self.export_comparison_button.setEnabled(
-            isinstance(self.current_metrics.get("validation"), dict)
-        )
+        self.export_comparison_button.setEnabled(self._single_result_export_context() is not None)
         self._render_metrics()
         self._render_training_curves()
         self._render_audit(payload.get("audit", {}))
@@ -5232,6 +5981,25 @@ class WorkbenchWindow(QMainWindow):
 
     def _render_metrics(self) -> None:
         self.metrics_text.setPlainText(json.dumps(self.current_metrics, ensure_ascii=False, indent=2, allow_nan=False))
+        unavailable_notes = []
+
+        def add_r2_note(label: str, values: Any) -> None:
+            if not isinstance(values, dict) or values.get("r2", object()) is not None:
+                return
+            count = values.get("sample_count")
+            if isinstance(count, int) and not isinstance(count, bool) and count < 2:
+                unavailable_notes.append(
+                    f"{label} R² 不可计算：该分区少于 2 个样本。"
+                )
+
+        for partition in ("train", "validation", "oof", "refit", "test"):
+            add_r2_note(PARTITION_LABELS.get(partition, partition), self.current_metrics.get(partition))
+        cv_metrics = self.current_metrics.get("cv")
+        fold_metrics = cv_metrics.get("fold_metrics") if isinstance(cv_metrics, dict) else None
+        if isinstance(fold_metrics, list):
+            for index, fold in enumerate(fold_metrics, start=1):
+                add_r2_note(f"第 {index} 折", fold)
+        self.metric_unavailable_label.setText("；".join(unavailable_notes))
         names: list[str] = []
         for split in ("train", "validation", "test"):
             values = self.current_metrics.get(split, {})
@@ -5567,6 +6335,7 @@ class WorkbenchWindow(QMainWindow):
             self._clear_loaded_parameter_snapshot()
         self._refresh_model_choices()
         self._update_target_state()
+        self._update_evaluation_support()
         self._on_configuration_changed()
 
     def _on_model_changed(self, _index: int = -1) -> None:
@@ -5574,9 +6343,62 @@ class WorkbenchWindow(QMainWindow):
             self._clear_loaded_parameter_snapshot()
         self._refresh_parameters()
         self._update_sequence_config_state()
+        self._update_reduction_config_state()
+        self._update_evaluation_support()
         self._refresh_algorithm_choices()
         self._update_target_state()
         self._on_configuration_changed()
+
+    def _on_evaluation_settings_changed(self) -> None:
+        self._update_evaluation_summary()
+        self._on_configuration_changed()
+
+    def _update_evaluation_support(self) -> None:
+        task = str(self.task_combo.currentData() or "")
+        model_id = str(self.model_combo.currentData() or "")
+        external_validation_models = {"N01", "N02", "H01", "H02", "H03", "N04", "N06"}
+        supported = task in {"classification", "regression"} and model_id not in external_validation_models
+        if supported:
+            reason = None
+        elif model_id in {"N01", "N02"}:
+            reason = f"{model_id} 需要外部验证集进行早停；该模型请使用留出法。"
+        elif model_id in external_validation_models or task == "sequence_modeling":
+            reason = "序列、HMM、窗口或深度模型使用专用验证流程；请使用留出法。"
+        else:
+            reason = "K 折交叉验证仅适用于普通表格分类或回归；请使用留出法。"
+        set_kfold_availability(
+            self.evaluation_controls,
+            supported=supported,
+            reason=reason,
+        )
+        if not supported and self.evaluation_method_combo.currentData() == "kfold":
+            self.evaluation_method_combo.blockSignals(True)
+            self.evaluation_method_combo.setCurrentIndex(
+                self.evaluation_method_combo.findData("holdout")
+            )
+            self.evaluation_method_combo.blockSignals(False)
+        help_label = self.evaluation_controls.get("resource_help")
+        if reason and hasattr(help_label, "setText"):
+            help_label.setText(reason)
+        elif help_label is not None:
+            from .evaluation_ui import resource_explanation
+
+            help_label.setText(resource_explanation(self.evaluation_folds_spin.value()))
+        self._update_evaluation_summary()
+
+    def _update_evaluation_summary(self) -> None:
+        if not hasattr(self, "evaluation_method_combo"):
+            return
+        if self.evaluation_method_combo.currentData() == "kfold":
+            self.preprocessing_summary.setText(
+                "K 折交叉验证仅在 80% 开发集内比较候选；独立 20% 测试集保留到冻结后评估一次。"
+                "每折的预处理器只在该折训练行拟合；OOF 预测覆盖每个开发样本一次。"
+            )
+        else:
+            self.preprocessing_summary.setText(
+                "留出法固定按 60% 训练、20% 验证、20% 最终测试划分；预处理器只在训练集拟合，"
+                "测试集只在最后确认后评估。"
+            )
 
     def _update_sequence_config_state(self) -> None:
         is_sequence = self.model_combo.currentData() in {"H01", "H02", "H03", "N04", "N06"}
@@ -5584,8 +6406,69 @@ class WorkbenchWindow(QMainWindow):
         self.sequence_config_edit.setVisible(is_sequence)
         self.sequence_config_help.setVisible(is_sequence)
 
+    def _update_reduction_config_state(self) -> None:
+        task = str(self.task_combo.currentData() or "")
+        model_id = str(self.model_combo.currentData() or "")
+        method = str(self.reduction_method_combo.currentData() or "pca")
+        reason = reduction_unsupported_reason(task, model_id, method)
+        supported = reason is None
+        if not supported and self.reduction_enabled_checkbox.isChecked():
+            self.reduction_enabled_checkbox.blockSignals(True)
+            self.reduction_enabled_checkbox.setChecked(False)
+            self.reduction_enabled_checkbox.blockSignals(False)
+        enabled = supported and self.reduction_enabled_checkbox.isChecked()
+        self.reduction_enabled_checkbox.setEnabled(supported)
+        self.reduction_method_combo.setEnabled(enabled)
+        self.reduction_components_spin.setEnabled(enabled)
+        if not supported:
+            help_text = self._reduction_unavailable_reason_zh(task, model_id)
+        elif enabled and method == "pca" and self._legacy_pca_config_unchanged:
+            help_text = (
+                "旧版 PCA 配置保持兼容：降维器只在训练分区拟合，验证集、测试集和新数据复用已拟合变换。"
+                "组件数不得超过实际拟合样本数与预处理后特征数中的较小值。"
+            )
+        elif enabled:
+            help_text = (
+                "降维器只在训练分区拟合，验证集、测试集和新数据复用已拟合变换。"
+                "输出维数必须小于预处理后特征数，并满足所选算法的拟合行数和数据秩限制。"
+            )
+        else:
+            help_text = (
+                "训练前降维默认关闭。可选择 PCA、TruncatedSVD、FastICA、"
+                "GaussianRandomProjection 或 KernelPCA。"
+            )
+        self.reduction_help_label.setText(help_text)
+
+    @staticmethod
+    def _reduction_unavailable_reason_zh(
+        task: str,
+        model_id: str,
+    ) -> str:
+        if task == "dimensionality reduction":
+            return "独立降维任务已有自己的算法设置，不能再叠加训练前降维。"
+        if model_id == "C13":
+            return "降维会产生连续分量；CategoricalNB 要求非负整数类别 ID。"
+        if model_id in {"C10", "C12"}:
+            return "降维分量可能为负；MultinomialNB 和 ComplementNB 要求输入非负。"
+        return "HMM 与窗口回归模型使用序列输入，不支持训练前表格降维。"
+
     def _on_sequence_config_changed(self) -> None:
         self._update_target_state()
+        self._on_configuration_changed()
+
+    def _on_reduction_enabled_changed(self, _checked: bool) -> None:
+        self._update_reduction_config_state()
+        self._on_configuration_changed()
+
+    def _on_reduction_method_changed(self, _index: int = -1) -> None:
+        if not self._applying_configuration and not self._params_initializing:
+            self._legacy_pca_config_unchanged = False
+        self._update_reduction_config_state()
+        self._on_configuration_changed()
+
+    def _on_reduction_components_changed(self, _value: int) -> None:
+        if not self._applying_configuration and not self._params_initializing:
+            self._legacy_pca_config_unchanged = False
         self._on_configuration_changed()
 
     def _on_loaded_model_path_edited(self, text: str) -> None:
@@ -5663,12 +6546,15 @@ class WorkbenchWindow(QMainWindow):
 
     def _clear_bound_result(self) -> None:
         self._session_plot_sources = {}
+        if hasattr(self, "result_chart_page"):
+            self.result_chart_page.refresh_sources(())
         self.bound_result = None
         self.current_metrics = {}
         self.training_curves = None
         self.artifact_paths = {}
         self.export_comparison_button.setEnabled(False)
         self.metrics_text.clear()
+        self.metric_unavailable_label.clear()
         self.sequence_summary_text.clear()
         self.audit_text.clear()
         self.artifacts_list.clear()
@@ -5697,7 +6583,7 @@ class WorkbenchWindow(QMainWindow):
         has_data = self.dataset is not None
         self.data_overview_action.setEnabled(has_data)
         self.basic_plot_action.setEnabled(has_data)
-        self.result_plot_action.setEnabled(bool(self.bound_result is not None and self._session_plot_sources))
+        self.result_plot_action.setEnabled(bool(self._session_plot_sources))
         process_running = self.process.state() != QProcess.ProcessState.NotRunning
         model_available = True
         model_id = self.model_combo.currentData()
@@ -5826,13 +6712,17 @@ class WorkbenchWindow(QMainWindow):
             return
         if self._guide_dialog is not None:
             self._guide_dialog.close()
+        if self._environment_dialog is not None:
+            self._environment_dialog.close()
         self._worker_action = None
         self._cleanup_config_file()
         event.accept()
 
 
 def main() -> int:
+    _configure_windows_application_id()
     app = QApplication.instance() or QApplication(sys.argv)
+    icon_path = _configure_application_icon(app)
     _configure_application_font(app)
     preferences_path = _default_preferences_path()
     try:
@@ -5851,6 +6741,9 @@ def main() -> int:
                 preferences_path=preferences_path,
                 logging_controller=controller,
             )
+            from .windows_identity import configure_taskbar_window
+
+            configure_taskbar_window(int(window.winId()), icon_path)
             controller.record_event(
                 "application_started",
                 message=json.dumps(
@@ -5886,6 +6779,35 @@ def main() -> int:
             return exit_code
     finally:
         controller.close()
+
+
+def _configure_windows_application_id() -> None:
+    """Give the running workbench its own taskbar identity before creating Qt."""
+    if sys.platform == "win32":
+        import ctypes
+
+        shell32 = ctypes.WinDLL("shell32")
+        set_app_id = shell32.SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = [ctypes.c_wchar_p]
+        set_app_id.restype = ctypes.c_long
+        set_app_id("hexiovo.PYML.Workbench")
+
+
+def _configure_application_icon(app: QApplication) -> Path:
+    """Use the launcher's multi-size ICO for the main window and all dialogs."""
+    from importlib.resources import files
+
+    resource = files("pyml_workbench").joinpath("resources", "workbench-desktop.ico")
+    icon_path = Path(str(resource))
+    if not icon_path.is_file():
+        package = Path(__file__).resolve().parent
+        if package.parent.name == "src":
+            icon_path = package.parent.parent / "assets/icons/workbench-desktop.ico"
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        raise FileNotFoundError(f"缺少或无法读取工作台图标：{icon_path}")
+    app.setWindowIcon(icon)
+    return icon_path
 
 
 def _configure_application_font(app: QApplication) -> str:

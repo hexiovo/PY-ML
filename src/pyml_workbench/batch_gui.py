@@ -199,21 +199,29 @@ class BatchSearchDialog(QDialog):
             self.method_combo.addItem(label, value)
         self.max_fits_spin = QSpinBox()
         self.max_fits_spin.setRange(1, 50)
-        self.max_fits_spin.setValue(50)
+        self.max_fits_spin.setValue(10)
         self.max_proposals_spin = QSpinBox()
         self.max_proposals_spin.setRange(1, 250)
-        self.max_proposals_spin.setValue(250)
+        self.max_proposals_spin.setValue(30)
         self.minutes_spin = QSpinBox()
         self.minutes_spin.setRange(1, 20)
-        self.minutes_spin.setValue(20)
+        self.minutes_spin.setValue(10)
         self.parallel_spin = QSpinBox()
         self.parallel_spin.setRange(1, 2)
         self.parallel_spin.setValue(1)
         form.addRow("搜索方法", self.method_combo)
-        form.addRow("每个组合最多真实拟合次数", self.max_fits_spin)
+        form.addRow("每个组合最多候选模型数", self.max_fits_spin)
         form.addRow("每个组合最多 proposals", self.max_proposals_spin)
         form.addRow("每个组合活动时限（分钟）", self.minutes_spin)
         form.addRow("并行 worker（每个 worker 线程数固定为 1）", self.parallel_spin)
+        self.budget_help_label = QLabel(
+            "提高候选数、proposals 或时限会允许搜索更多备选并通常增加 CPU 时间；调低可更快结束，"
+            "但可能少看一些候选，不能保证模型效果更好。更多并行 worker 会同时运行更多算法，"
+            "增加 CPU 和内存占用；每个 worker 固定使用 1 个数值线程。任一预算上限到达即停止。"
+        )
+        self.budget_help_label.setObjectName("helperText")
+        self.budget_help_label.setWordWrap(True)
+        form.addRow("资源影响", self.budget_help_label)
         root_layout.addLayout(form)
 
         self.preview_label = QLabel("请填写数据配置以查看组合数和预算上限。")
@@ -373,7 +381,11 @@ class BatchSearchDialog(QDialog):
             "parameters": config.parameters,
             "seed": config.split.seed,
             "sequence": config.sequence.to_dict() if config.sequence is not None else None,
+            "pca_components": config.pca_components,
         }
+        if config.reduction_method is not None:
+            row["reduction_method"] = config.reduction_method
+            row["reduction_components"] = config.reduction_components
         self.datasets_edit.setPlainText(json.dumps([row], ensure_ascii=False, indent=2))
         try:
             self.spaces_edit.setPlainText(
@@ -460,6 +472,11 @@ class BatchSearchDialog(QDialog):
             }
             if defaults is not None and defaults.sequence is not None:
                 row["sequence"] = defaults.sequence.to_dict()
+            if defaults is not None and defaults.pca_components is not None:
+                row["pca_components"] = defaults.pca_components
+            if defaults is not None and defaults.reduction_method is not None:
+                row["reduction_method"] = defaults.reduction_method
+                row["reduction_components"] = defaults.reduction_components
             rows.append(row)
         self.datasets_edit.setPlainText(json.dumps(rows, ensure_ascii=False, indent=2))
 
@@ -538,7 +555,11 @@ class BatchSearchDialog(QDialog):
                     split=split,
                     output_dir=None,
                     sequence=SequenceConfig.from_dict(row["sequence"]) if row.get("sequence") is not None else None,
+                    pca_components=row.get("pca_components"),
+                    reduction_method=row.get("reduction_method"),
+                    reduction_components=row.get("reduction_components"),
                 )
+                config.validate()
                 spec = SearchSpec(
                     method=method,
                     space=space,
@@ -557,7 +578,7 @@ class BatchSearchDialog(QDialog):
             availability = {item["id"]: item for item in list_models()}
             combinations = sum(len(row["models"]) for row in rows)
             per_combo_fits = self.max_fits_spin.value()
-            max_total_fits = combinations * per_combo_fits
+            max_total_candidates = combinations * per_combo_fits
             max_total_proposals = combinations * self.max_proposals_spin.value()
             parallel = self.parallel_spin.value()
             max_wall_minutes = combinations * self.minutes_spin.value() / parallel
@@ -574,7 +595,7 @@ class BatchSearchDialog(QDialog):
                 availability_note = "\n不可用模型（启动前会阻止入队）：" + "；".join(unavailable)
             self.preview_label.setText(
                 f"{len(rows)} 份独立数据配置 × 共 {combinations} 个兼容模型组合；"
-                f"最多 {max_total_fits} 次真实搜索拟合、{max_total_proposals} 个 proposals，"
+                f"最多 {max_total_candidates} 个候选模型、{max_total_proposals} 个 proposals，"
                 f"活动时长上限约 {max_wall_minutes:.1f} worker 分钟（每组合 {self.minutes_spin.value()} 分钟，"
                 f"最多 {parallel} 个并行 worker）。Grid/TPE/随机/遗传/退火均使用同一类型化空间。"
                 f"{availability_note}"
@@ -1924,12 +1945,13 @@ class BatchSearchDialog(QDialog):
             completed_count = sum(job.get("status") == "completed" for job in history_jobs)
             description = (
                 f"发现 {len(history_jobs)} 条已有批量历史，其中 {completed_count} 条已完成。"
-                "恢复只载入设置并显示已有结果，保持完成状态；不会重新拟合或执行最终测试。"
+                "恢复只回填批量设置并显示已有结果，保持完成状态；不会启动新搜索、重新拟合或执行最终测试。"
             )
             resume_label = "恢复设置并查看成果"
         else:
             description = (
-                "发现已保存的批量设置，目前没有历史任务。恢复只载入设置，不会启动搜索或最终测试。"
+                "发现已保存的批量设置，目前没有历史任务。恢复只回填设置，不会自动启动搜索或最终测试；"
+                "检查配置后如需运行，请点击“预检并启动队列”。"
             )
             resume_label = "恢复已保存设置"
         box.setText(description)

@@ -30,7 +30,7 @@ _SHA_FIELDS = (
     "sequence_plan_sha256",
     "cache_payload_sha256",
 )
-_PARTITIONS = frozenset({"all", "train", "validation", "test"})
+_PARTITIONS = frozenset({"all", "train", "validation", "test", "oof"})
 _SOURCE_KINDS = frozenset({"loaded_eda", "session_cache", "batch_cache"})
 _OWNER_KINDS = frozenset({"loaded_dataset", "session", "batch_job"})
 
@@ -321,6 +321,7 @@ class PlotKind(str, Enum):
     SCATTER = "scatter"
     CORRELATION = "correlation"
     CLASSIFICATION_CONFUSION = "classification_confusion"
+    CLASSIFICATION_CONFUSION_NORMALIZED = "confusion_matrix_normalized"
     REGRESSION_ACTUAL_PREDICTED = "regression_actual_predicted"
     REGRESSION_RESIDUAL = "regression_residual"
     CLUSTER_SCATTER = "cluster_scatter"
@@ -337,6 +338,7 @@ _KIND_TITLES = {
     PlotKind.SCATTER: "数值散点图",
     PlotKind.CORRELATION: "数值相关性",
     PlotKind.CLASSIFICATION_CONFUSION: "真实类别与预测类别",
+    PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED: "按真实类别归一化的混淆矩阵",
     PlotKind.REGRESSION_ACTUAL_PREDICTED: "真实值与预测值",
     PlotKind.REGRESSION_RESIDUAL: "回归残差（真实值 − 预测值）",
     PlotKind.CLUSTER_SCATTER: "已有特征坐标上的聚类",
@@ -518,19 +520,32 @@ def available_plot_specs(source: PlotSource) -> tuple[PlotSpec, ...]:
     output_ids = {column.column_id for column in source.outputs}
     if {"classification.y_true", "classification.y_pred"}.issubset(output_ids):
         specs.append(PlotSpec(PlotKind.CLASSIFICATION_CONFUSION, ("classification.y_true", "classification.y_pred")))
+        specs.append(PlotSpec(
+            PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED,
+            ("classification.y_true", "classification.y_pred"),
+        ))
     if source.score_cache is not None and "classification.y_true" in output_ids:
         y_true = _find_column(source, "classification.y_true")
         present_classes = {_typed_key(value) for value in y_true.values if not _is_missing(value)}
         if len(present_classes) >= 2:
             for _score_column, label in source.score_cache.score_column_map:
-                class_title = f"（类别 {label}）"
+                positive_count, negative_count = _classification_support(source, label)
+                unavailable = _curve_support_reason(positive_count, negative_count)
+                class_title = f"（类别 {_display_value(label)}）"
+                unavailable_title = f"（不可计算：{unavailable}）" if unavailable else ""
                 specs.append(PlotSpec(
                     PlotKind.ROC_CURVE, ("classification.y_true",),
-                    title=f"ROC 曲线{class_title}", class_label=label,
+                    title=f"ROC 曲线{class_title}{unavailable_title}", class_label=label,
                 ))
                 specs.append(PlotSpec(
                     PlotKind.PRECISION_RECALL, ("classification.y_true",),
-                    title=f"精确率-召回率曲线{class_title}", class_label=label,
+                    title=f"精确率-召回率曲线{class_title}{unavailable_title}", class_label=label,
+                ))
+            if len(source.score_cache.class_order) >= 3:
+                specs.append(PlotSpec(
+                    PlotKind.ROC_CURVE,
+                    ("classification.y_true",),
+                    title="多类别 OvR ROC 曲线",
                 ))
     if source.explanation_cache is not None:
         specs.append(PlotSpec(PlotKind.NATIVE_EXPLANATION))
@@ -594,6 +609,10 @@ def _payload(
     y_label: str = "",
     **fields: Any,
 ) -> PlotPayload:
+    chart_title = title or spec.display_title
+    oof_label = "交叉验证折外预测（OOF）"
+    if source.partition == "oof" and oof_label not in chart_title:
+        chart_title = f"{chart_title} · {oof_label}"
     return PlotPayload(
         spec=spec,
         source_kind=source.source_kind,
@@ -603,11 +622,46 @@ def _payload(
         effective_count=effective,
         excluded_count=excluded,
         sampled_count=0,
-        title=title or spec.display_title,
+        title=chart_title,
         x_label=x_label,
         y_label=y_label,
         **fields,
     )
+
+
+def _source_chart_title(source: PlotSource, title: str) -> str:
+    """Keep the owned result source and selected data partition visible in chart titles."""
+    return f"{title} · 来源 {source.source_id} · 分区 {_partition_display_name(source.partition)}"
+
+
+def _short_chart_title(title: str, *, limit: int = 62) -> str:
+    """Fit long source/partition titles while preserving their full payload elsewhere."""
+    if len(title) <= limit:
+        return title
+    suffix_length = 16
+    prefix_length = limit - suffix_length - 1
+    return f"{title[:prefix_length].rstrip()}…{title[-suffix_length:].lstrip()}"
+
+
+def _partition_display_name(partition: str) -> str:
+    return "交叉验证折外预测（OOF）" if partition == "oof" else partition
+
+
+def _classification_support(source: PlotSource, class_label: object) -> tuple[int, int]:
+    actual_column = _find_column(source, "classification.y_true")
+    observed = [value for value in actual_column.values if not _is_missing(value)]
+    positives = sum(_typed_key(value) == _typed_key(class_label) for value in observed)
+    return positives, len(observed) - positives
+
+
+def _curve_support_reason(positive_count: int, negative_count: int) -> str | None:
+    if positive_count == 0 and negative_count == 0:
+        return "该分区没有有效真实类别"
+    if positive_count == 0:
+        return "该分区没有正例"
+    if negative_count == 0:
+        return "该分区没有负例"
+    return None
 
 
 def _histogram(source: PlotSource, spec: PlotSpec) -> PlotPayload:
@@ -743,6 +797,12 @@ def _classification_confusion(source: PlotSource, spec: PlotSpec) -> PlotPayload
     actual, predicted = (_find_column(source, item) for item in spec.column_ids)
     labels: list[object] = []
     seen: set[tuple[type, object]] = set()
+    if source.score_cache is not None:
+        for value in source.score_cache.class_order:
+            key = _typed_key(value)
+            if key not in seen:
+                seen.add(key)
+                labels.append(value)
     pairs: list[tuple[object, object]] = []
     for true_value, predicted_value in zip(actual.values, predicted.values):
         if _is_missing(true_value) or _is_missing(predicted_value):
@@ -757,31 +817,113 @@ def _classification_confusion(source: PlotSource, spec: PlotSpec) -> PlotPayload
     matrix = [[0 for _ in labels] for _ in labels]
     for true_value, predicted_value in pairs:
         matrix[positions[_typed_key(true_value)]][positions[_typed_key(predicted_value)]] += 1
+    normalized = spec.kind == PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED
+    if normalized:
+        matrix_values = tuple(
+            tuple(value / sum(row) for value in row) if sum(row) else tuple(0.0 for _value in row)
+            for row in matrix
+        )
+        title = _source_chart_title(source, "按真实类别归一化的混淆矩阵")
+        note = "每行按真实类别的样本数归一化；零支持行保留为 0，并在图中标为 n/a。"
+    else:
+        matrix_values = tuple(tuple(row) for row in matrix)
+        title = _source_chart_title(source, "真实类别与预测类别")
+        note = ""
     return _payload(
         source,
         spec,
         effective=len(pairs),
         excluded=source.partition_count - len(pairs),
+        title=title,
         x_label="预测类别",
         y_label="真实类别",
         labels=tuple(labels),
-        matrix=tuple(tuple(row) for row in matrix),
+        matrix=matrix_values,
+        note=note,
     )
 
 
 def _classification_curve(source: PlotSource, spec: PlotSpec) -> PlotPayload:
-    from sklearn.metrics import precision_recall_curve, roc_curve
+    from sklearn.metrics import auc, precision_recall_curve, roc_curve
 
     cache = source.score_cache
     if cache is None:
-        raise ValueError(source.score_unavailable_reason or "没有真实分类分数缓存；请重新训练后绘 ROC/PR。")
+        raise ValueError(
+            source.score_unavailable_reason
+            or "没有拟合估计器的真实概率或决策分数缓存，无法绘 ROC/PR；请重新训练后再试。"
+        )
     actual_column = _find_column(source, "classification.y_true")
-    score_column = next(
-        (index for index, label in cache.score_column_map if _typed_key(label) == _typed_key(spec.class_label)),
-        None,
-    )
+    score_name = "概率" if cache.score_type == "probability" else "决策分数（非概率）"
+    if spec.kind == PlotKind.ROC_CURVE and spec.class_label is None:
+        if len(cache.class_order) < 3:
+            raise ValueError("多类别 OvR ROC 需要至少三个已缓存类别。")
+        score_columns = {
+            _typed_key(label): index for index, label in cache.score_column_map
+        }
+        series: list[PlotSeries] = []
+        auc_values: list[float] = []
+        unavailable_classes: list[str] = []
+        effective = 0
+        for label in cache.class_order:
+            score_column = score_columns.get(_typed_key(label))
+            if score_column is None:
+                unavailable_classes.append(f"{_display_value(label)}：没有对应的分数列")
+                continue
+            positives: list[int] = []
+            scores: list[float] = []
+            for actual, row in zip(actual_column.values, cache.values):
+                if _is_missing(actual):
+                    continue
+                positives.append(int(_typed_key(actual) == _typed_key(label)))
+                scores.append(float(row[score_column]))
+            positive_count = sum(positives)
+            negative_count = len(positives) - positive_count
+            reason = _curve_support_reason(positive_count, negative_count)
+            if reason:
+                unavailable_classes.append(f"{_display_value(label)}：{reason}")
+                continue
+            fpr, tpr, _thresholds = roc_curve(positives, scores)
+            class_auc = float(auc(fpr, tpr))
+            auc_values.append(class_auc)
+            effective = max(effective, len(scores))
+            series.append(PlotSeries(
+                f"类别 {_display_value(label)} · AUC={class_auc:.3f} · {score_name}",
+                tuple(fpr),
+                tuple(tpr),
+            ))
+        if not series:
+            detail = "；".join(unavailable_classes) or "没有可计算的类别"
+            raise ValueError(f"多类别 OvR ROC 无法计算：{detail}。")
+        if not unavailable_classes and len(auc_values) == len(cache.class_order):
+            note = f"真实{score_name}；全类别宏平均 OvR AUC={math.fsum(auc_values) / len(auc_values):.3f}。"
+        else:
+            note = (
+                f"评分类型：{cache.score_type}；分数来自拟合估计器的实际输出；"
+                "全类别宏平均 OvR AUC 不可计算，未覆盖类别：" + "；".join(unavailable_classes) + "。"
+            )
+        return _payload(
+            source,
+            spec,
+            effective=effective,
+            excluded=source.partition_count - effective,
+            title=_source_chart_title(source, "多类别 OvR ROC 曲线"),
+            x_label="假正例率（FPR）",
+            y_label="真正例率（TPR）",
+            series=tuple(series),
+            note=note,
+        )
+
+    if spec.class_label is None:
+        raise ValueError("此 ROC/PR 图表没有指定真实类别分数。")
+    score_column = next((
+        index for index, label in cache.score_column_map
+        if _typed_key(label) == _typed_key(spec.class_label)
+    ), None)
     if score_column is None:
-        raise ValueError("所选类别没有对应的实际估计器分数列。")
+        raise ValueError(
+            f"类别 {_display_value(spec.class_label)} 没有对应的实际估计器分数列；"
+            "不能用硬预测标签代替概率或决策分数。"
+        )
     positives: list[int] = []
     scores: list[float] = []
     for actual, row in zip(actual_column.values, cache.values):
@@ -789,22 +931,30 @@ def _classification_curve(source: PlotSource, spec: PlotSpec) -> PlotPayload:
             continue
         positives.append(int(_typed_key(actual) == _typed_key(spec.class_label)))
         scores.append(float(row[score_column]))
-    if len(set(positives)) != 2:
-        raise ValueError("ROC/PR 需要该评估分区同时包含所选类别和其他类别；请换分区或重新划分数据。")
+    positive_count = sum(positives)
+    negative_count = len(positives) - positive_count
+    reason = _curve_support_reason(positive_count, negative_count)
+    if reason:
+        raise ValueError(
+            f"ROC/PR 无法计算：类别 {_display_value(spec.class_label)} 在 {_partition_display_name(source.partition)} 分区{reason} "
+            f"（正例 {positive_count}，负例 {negative_count}）；请换分区或重新划分数据。"
+        )
     if spec.kind == PlotKind.ROC_CURVE:
         x_values, y_values, _thresholds = roc_curve(positives, scores)
+        score_auc = float(auc(x_values, y_values))
+        title = _source_chart_title(source, f"ROC 曲线：类别 {_display_value(spec.class_label)}")
+        series_name = f"类别 {_display_value(spec.class_label)} · AUC={score_auc:.3f} · {score_name}"
         x_label, y_label = "假正例率（FPR）", "真正例率（TPR）"
-        title = f"ROC 曲线：类别 {spec.class_label}"
     else:
         y_values, x_values, _thresholds = precision_recall_curve(positives, scores)
+        title = _source_chart_title(source, f"精确率-召回率曲线：类别 {_display_value(spec.class_label)}")
+        series_name = f"类别 {_display_value(spec.class_label)} · {score_name}"
         x_label, y_label = "召回率", "精确率"
-        title = f"精确率-召回率曲线：类别 {spec.class_label}"
-    score_name = "概率" if cache.score_type == "probability" else "决策分数（非概率）"
     return _payload(
         source, spec, effective=len(scores), excluded=source.partition_count - len(scores),
         title=title, x_label=x_label, y_label=y_label,
-        series=(PlotSeries(f"{spec.class_label} · {score_name}", tuple(x_values), tuple(y_values)),),
-        note=f"评分类型：{cache.score_type}；分数来自拟合估计器的实际输出。",
+        series=(PlotSeries(series_name, tuple(x_values), tuple(y_values)),),
+        note=f"真实估计器{score_name}。",
     )
 
 
@@ -985,6 +1135,7 @@ def build_plot_payload(source: PlotSource, spec: PlotSpec) -> PlotPayload:
         PlotKind.SCATTER: _scatter,
         PlotKind.CORRELATION: _correlation,
         PlotKind.CLASSIFICATION_CONFUSION: _classification_confusion,
+        PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED: _classification_confusion,
         PlotKind.REGRESSION_ACTUAL_PREDICTED: _regression,
         PlotKind.REGRESSION_RESIDUAL: _regression,
         PlotKind.CLUSTER_SCATTER: _cluster_scatter,
@@ -1002,7 +1153,8 @@ def _count_caption(payload: PlotPayload) -> str:
     if payload.spec.kind == PlotKind.BATCH_METRIC_COMPARISON:
         return f"来源 {payload.source_id} · 同条件成功任务数 {payload.effective_count}"
     caption = (
-        f"来源 {payload.source_id} · 分区 {payload.partition} · 分区 {payload.partition_count} 行 · "
+        f"来源 {payload.source_id} · 分区 {_partition_display_name(payload.partition)} · "
+        f"分区 {payload.partition_count} 行 · "
         f"有效 {payload.effective_count} · 排除 {payload.excluded_count} · 抽样 {payload.sampled_count}"
     )
     if payload.missing_count:
@@ -1016,7 +1168,12 @@ def _label_text(value: object) -> str:
     return _display_value(value)
 
 
-def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
+def render_plot_payload(
+    payload: PlotPayload,
+    figure: Any | None = None,
+    *,
+    include_count_caption: bool = True,
+) -> Any:
     """Render one payload into the explicitly supplied Figure, without pyplot state."""
     from matplotlib.figure import Figure
     from matplotlib import font_manager
@@ -1025,6 +1182,8 @@ def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
 
     if not isinstance(payload, PlotPayload):
         raise TypeError("payload must be a PlotPayload")
+    if not isinstance(include_count_caption, bool):
+        raise TypeError("include_count_caption must be a bool")
     if figure is None:
         figure = Figure(figsize=(7.2, 4.6))
     if not isinstance(figure, Figure):
@@ -1084,16 +1243,34 @@ def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
                 for column_index, value in enumerate(row):
                     text = "n/a" if not math.isfinite(float(value)) else f"{value:.2f}"
                     axis.text(column_index, row_index, text, ha="center", va="center")
-        elif kind == PlotKind.CLASSIFICATION_CONFUSION:
-            data = np.asarray(payload.matrix, dtype=np.int64)
-            image = axis.imshow(data, cmap="Blues")
+        elif kind in {
+            PlotKind.CLASSIFICATION_CONFUSION,
+            PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED,
+        }:
+            normalized = kind == PlotKind.CLASSIFICATION_CONFUSION_NORMALIZED
+            data = np.asarray(payload.matrix, dtype=np.float64 if normalized else np.int64)
+            image = axis.imshow(data, cmap="Blues", vmin=0.0, vmax=1.0 if normalized else None)
             labels = [_label_text(label) for label in payload.labels]
             axis.set_xticks(range(len(labels)), labels, rotation=35, ha="right")
             axis.set_yticks(range(len(labels)), labels)
-            figure.colorbar(image, ax=axis, label="计数")
+            if normalized:
+                from matplotlib.ticker import PercentFormatter
+
+                figure.colorbar(
+                    image,
+                    ax=axis,
+                    label="真实类别行内比例",
+                    format=PercentFormatter(xmax=1.0),
+                )
+            else:
+                figure.colorbar(image, ax=axis, label="计数")
             for row_index, row in enumerate(payload.matrix):
                 for column_index, value in enumerate(row):
-                    axis.text(column_index, row_index, str(value), ha="center", va="center")
+                    if normalized:
+                        text = "n/a" if not any(float(item) > 0.0 for item in row) else f"{float(value):.1%}"
+                    else:
+                        text = str(value)
+                    axis.text(column_index, row_index, text, ha="center", va="center")
         elif kind in {PlotKind.REGRESSION_ACTUAL_PREDICTED, PlotKind.REGRESSION_RESIDUAL}:
             axis.scatter(payload.x_values, payload.y_values, alpha=0.75)
             if kind == PlotKind.REGRESSION_ACTUAL_PREDICTED and payload.x_values:
@@ -1141,12 +1318,13 @@ def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
         elif kind == PlotKind.BATCH_METRIC_COMPARISON:
             axis.bar(range(len(payload.x_values)), payload.y_values, color="#2563EB")
             axis.set_xticks(range(len(payload.x_values)), [str(value) for value in payload.x_values], rotation=30, ha="right")
-        axis.set_title(payload.title)
+        axis.set_title(_short_chart_title(payload.title), fontsize=10)
         axis.set_xlabel(payload.x_label)
         axis.set_ylabel(payload.y_label)
-    figure.text(0.01, 0.035, _count_caption(payload), fontsize=8, va="center")
+    if include_count_caption:
+        figure.text(0.01, 0.062, _count_caption(payload), fontsize=8, va="center")
     if payload.note:
-        figure.text(0.01, 0.008, payload.note, fontsize=8, va="center")
+        figure.text(0.01, 0.022, payload.note, fontsize=8, va="center")
     for family in ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC"):
         try:
             font_manager.findfont(font_manager.FontProperties(family=family), fallback_to_default=False)
@@ -1155,7 +1333,8 @@ def render_plot_payload(payload: PlotPayload, figure: Any | None = None) -> Any:
         for text_artist in figure.findobj(match=lambda artist: isinstance(artist, Text)):
             text_artist.set_fontfamily(family)
         break
-    figure.tight_layout(rect=(0, 0.09, 1, 0.95))
+    bottom = 0.09 if include_count_caption or payload.note else 0.02
+    figure.tight_layout(rect=(0, bottom, 1, 0.95))
     return figure
 
 

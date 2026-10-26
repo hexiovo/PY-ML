@@ -1,13 +1,13 @@
 {
-  "version": "0.4.4",
-  "PDF": "F:\\桌面\\程序\\PY-ML\\output\\pdf\\PYML-Workbench-0.4.4-图文指南.pdf",
-  "pages": 36,
+  "version": "0.4.5",
+  "PDF": "F:\\桌面\\程序\\PY-ML\\output\\pdf\\PYML-Workbench-0.4.5-图文指南.pdf",
+  "pages": 37,
   "chapters": 13,
   "screenshots": 19,
   "manifest_screenshots": 19,
-  "bytes": 2542911,
-  "sha256": "e8b3f1d78cef37fb620dcdfc8855486500de5742a1aaf9c2fc2dd20ace7ee5f7",
-  "source_sha256": "1b368a0923ac068db6855fd9bfe58b26477eea61c492a07ad76e8e995b108d7d",
+  "bytes": 2553964,
+  "sha256": "266e34595b6d666fd28ecf8b899479fb3a90c4f47aeec4228b7712c7f4c2218a",
+  "source_sha256": "2405235026c82f1e79d6c850aaebdf986bfd6437c45d7a12294ea798cfdf5cba",
   "text_and_bookmark_checks": "PASS",
   "directory_links": 26,
   "linked_chapters": 13,
@@ -21,7 +21,7 @@
     "/AAAAAA+MicrosoftYaHei-Bold-0": true,
     "/AAAAAB+MicrosoftYaHei-Bold-0": true
   },
-  "screenshot_manifest_sha256": "a570cf130055e8dd429360e1f2b41f9e7347935ae8f8d77e8cb2739e5526a46f",
-  "portrait_pages": 32,
+  "screenshot_manifest_sha256": "836b87fb182220808193caae1015959e428de08fde39bdf0f59e503caf7218c5",
+  "portrait_pages": 33,
   "landscape_pages": 4
 }

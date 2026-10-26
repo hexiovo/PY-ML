@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyml-workbench"
-version = "0.4.4"
+version = "0.4.5"
 description = "面向表格数据的 Python 机器学习包与中文桌面工作台，支持批量验证搜索、提升树模型与模型解释图"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -50,6 +50,7 @@ packages = ["src/pyml_workbench"]
 [tool.hatch.build.targets.wheel.force-include]
 "docs/overall-guide.md" = "pyml_workbench/resources/overall-guide.md"
 "docs/assets/guide-ui" = "pyml_workbench/resources/assets/guide-ui"
+"assets/icons/workbench-desktop.ico" = "pyml_workbench/resources/workbench-desktop.ico"
 
 [tool.hatch.build.targets.sdist]
 only-include = [
@@ -63,4 +64,5 @@ only-include = [
   "examples",
   "tests",
   "packaging",
+  "assets",
 ]

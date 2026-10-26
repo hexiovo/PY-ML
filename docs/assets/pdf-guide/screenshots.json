@@ -1,5 +1,7 @@
 {
-  "version": "0.4.4",
+  "version": "0.4.5",
+  "revision_date": "2026-10-11",
+  "screenshot_reuse_note": "Existing verified screenshots are retained with their original per-image provenance; the 0.4.5 plugin settings changes are documented in text.",
   "source_kind": "Mixed Qt captures; earlier verified screenshots were retained and changed wizard screens refreshed. See each screenshot source_kind for provenance.",
   "data_kind": "Deterministic synthetic data, no user data",
   "sample_rows": 180,
@@ -328,6 +330,5 @@
       "model_C02_119c415d",
       "validation_predictions_csv"
     ]
-  },
-  "revision_date": "2026-10-04"
+  }
 }

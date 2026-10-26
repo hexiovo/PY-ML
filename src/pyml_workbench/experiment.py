@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,7 @@ from .adapters import UnsupportedOperationError
 from .catalog import build_estimator, get_model, list_models, model_capabilities
 from .config import ConfigError, ExperimentConfig
 from .data import DatasetError, LoadedDataset, load_dataset, select_features_target
-from .preprocessing import build_preprocessor
+from .preprocessing import build_preprocessor, fit_transform_preprocessor
 from .sequence import SequenceConfig, build_sequence_plan
 
 _EXTENDED_MODEL_IDS = {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}
@@ -183,8 +184,17 @@ def _build_snapshot_from_frame(
     if labels is not None and labels.isna().any():
         raise ConfigError("Objective labels contain missing values")
     if splits is None:
-        normalized_splits = _split_rows(target, len(features), config.split.seed, stratified=config.task == "classification")
+        if config.split.strategy == "kfold":
+            from .cross_validation import make_cv_plan
+
+            cv_plan = make_cv_plan(len(features), target, task=config.task,
+                                   n_splits=config.split.n_splits, seed=config.split.seed)
+            normalized_splits = {"development": cv_plan.development_indices.copy(), "test": cv_plan.test_indices.copy()}
+        else:
+            normalized_splits = _split_rows(target, len(features), config.split.seed, stratified=config.task == "classification")
     else:
+        if config.split.strategy == "kfold":
+            raise ExperimentError("CV snapshots derive their shared development/test/fold positions from the configured seed")
         if not isinstance(splits, dict) or set(splits) != {"train", "validation", "test"}:
             raise ExperimentError("Snapshot splits must contain train, validation, and test positions")
         normalized_splits = {}
@@ -209,6 +219,12 @@ def _build_snapshot_from_frame(
         "task": config.task, "dataset_config": payload["dataset"], "split_config": payload["split"],
         "objective_labels_column": objective_labels_column,
     }
+    if config.split.strategy == "kfold":
+        from .cv_experiment import CrossValidationSnapshot
+
+        manifest["cv_plan"] = cv_plan.to_dict()
+        return CrossValidationSnapshot(features.copy(deep=True), target.copy(deep=True), labels,
+                                       normalized_splits, source_path, manifest, cv_plan)
     return DatasetSnapshot(features.copy(deep=True), target.copy(deep=True) if target is not None else None, labels, normalized_splits, source_path, manifest)
 
 
@@ -386,6 +402,28 @@ def _canonical_config(config: ExperimentConfig) -> tuple[dict[str, Any], str]:
     return json.loads(encoded), hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def configured_preprocessor(features: pd.DataFrame, config: ExperimentConfig):
+    """Fresh preprocessing factory shared by CV folds and final development refit.
+
+    Keyword-only configuration options are supplied by the factory's public
+    signature, so a learned transform need not have a particular name or class.
+    The caller passes only its permitted fit rows, never the whole development
+    table when fitting a fold.
+    """
+    from sklearn.base import clone
+
+    factory_parameters = inspect.signature(build_preprocessor).parameters
+    options = {
+        name: getattr(config, name)
+        for name, parameter in factory_parameters.items()
+        if parameter.kind == inspect.Parameter.KEYWORD_ONLY and hasattr(config, name)
+    }
+    if "seed" in factory_parameters:
+        options["seed"] = config.split.seed
+    transformer, specification = build_preprocessor(features, config.model_id, config.parameters, **options)
+    return clone(transformer), dict(specification), options
+
+
 def _split_rows(target: pd.Series | None, row_count: int, seed: int, *, stratified: bool):
     if row_count < 10:
         raise SplitError("At least 10 rows are needed to create meaningful 60/20/20 train/validation/test partitions")
@@ -478,7 +516,7 @@ def _classification_metrics(actual, predicted) -> dict[str, Any]:
 def _regression_metrics(actual, predicted) -> dict[str, Any]:
     return {
         "sample_count": int(len(actual)),
-        "r2": float(r2_score(actual, predicted)),
+        "r2": float(r2_score(actual, predicted)) if len(actual) >= 2 else None,
         "mae": float(mean_absolute_error(actual, predicted)),
         "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
     }
@@ -803,6 +841,8 @@ def prepare_experiment(
     sequence_plan: Any | None = None,
     selected_epochs: int | None = None,
     refit_provenance: dict[str, Any] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    deadline: float | None = None,
 ) -> ExperimentSession:
     """Fit once and return a frozen validation session before touching the test partition."""
     if isinstance(config, dict):
@@ -810,6 +850,17 @@ def prepare_experiment(
     if not isinstance(config, ExperimentConfig):
         raise TypeError("config must be an ExperimentConfig or its JSON-compatible dictionary")
     config.validate()
+    if config.split.strategy == "kfold":
+        from .cv_experiment import prepare_cv_experiment, refit_cv_experiment
+
+        if sequence_plan is not None:
+            raise ConfigError("K-fold tabular workflows do not accept a sequence plan")
+        if _fit_scope == "train_validation":
+            return refit_cv_experiment(config, snapshot=snapshot, on_event=on_event)
+        if _fit_scope != "train":
+            raise ConfigError("Invalid fit scope")
+        return prepare_cv_experiment(config, snapshot=snapshot, on_event=on_event,
+                                     should_cancel=should_cancel, deadline=deadline)
     extended_model_ids = {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}
     if config.model_id in extended_model_ids:
         from .extended_experiment import ExtendedExperimentSession, prepare_extended_experiment
@@ -925,7 +976,15 @@ def prepare_experiment(
     y_train = target.iloc[train_idx].copy(deep=True) if target is not None else None
     x_validation = features.iloc[validation_idx].copy(deep=True)
     y_validation = target.iloc[validation_idx].copy(deep=True) if target is not None else None
-    preprocessor, preprocessing = build_preprocessor(features, config.model_id, config.parameters)
+    preprocessor, preprocessing = build_preprocessor(
+        features,
+        config.model_id,
+        config.parameters,
+        pca_components=config.pca_components,
+        reduction_method=config.reduction_method,
+        reduction_components=config.reduction_components,
+        seed=config.split.seed,
+    )
     events: list[str] = []
 
     def record_event(name: str) -> None:
@@ -940,7 +999,13 @@ def prepare_experiment(
     for name in ("dataset_loaded", "target_validated", "split_created"):
         record_event(name)
     try:
-        x_train_ready = preprocessor.fit_transform(x_train)
+        x_train_ready, reduction_metadata = fit_transform_preprocessor(
+            preprocessor,
+            x_train,
+            fit_scope=_fit_scope,
+        )
+        if reduction_metadata is not None:
+            preprocessing["reduction"] = reduction_metadata
         record_event("preprocessor_fit_train_only")
         x_validation_ready = preprocessor.transform(x_validation) if len(validation_idx) else None
         if config.task in {"classification", "regression"}:
@@ -1137,6 +1202,8 @@ def freeze_experiment(session: ExperimentSession, expected_config: ExperimentCon
     """Approve this fitted snapshot; repeated approval never resets test state."""
     if not isinstance(session, ExperimentSession):
         raise TypeError("session must be an ExperimentSession from prepare_experiment")
+    if session.config.split.strategy == "kfold" and session.fitted_model is None:
+        raise ExperimentError("This is a CV evaluation session without a final model; freeze its search winner and refit development rows first")
     snapshot, digest = _canonical_config(session.config)
     if (digest != session.frozen_config_sha256 or snapshot != session.frozen_config
             or session.fitted_model.config != snapshot
@@ -1177,6 +1244,11 @@ def finalize_experiment(
     """Compatibility API: approve and evaluate a prepared session exactly once."""
     if not isinstance(session, ExperimentSession):
         raise TypeError("session must be an ExperimentSession from prepare_experiment")
+    if session.config.split.strategy == "kfold" and session.fitted_model is None:
+        from .cv_experiment import refit_cv_session
+
+        session = refit_cv_session(session, on_event=on_event)
+        return evaluate_test(session, on_event=on_event)
     if session.finalized:
         raise ExperimentError("This validation session has already entered final test evaluation")
     freeze_experiment(session)
@@ -1294,7 +1366,8 @@ def _evaluate_test_once(
         "split_counts": {name: int(len(values)) for name, values in splits.items()},
         "split_positions": {name: [int(item) for item in values] for name, values in splits.items()},
         "preprocessor_fit_positions": [int(item) for item in splits["train"]],
-        "preprocessor_fit_policy": "train+validation only" if session.fit_scope == "train_validation" else "training partition only",
+        "preprocessor_fit_policy": ("development only" if config.split.strategy == "kfold" else
+                                    "train+validation only" if session.fit_scope == "train_validation" else "training partition only"),
         "fit_scope": session.fit_scope,
         "snapshot_manifest": session.snapshot_manifest,
         "test_evaluation_count": session.test_evaluation_count,
@@ -1302,6 +1375,8 @@ def _evaluate_test_once(
             (i for i, item in enumerate(events) if item.startswith("test_")), len(events)
         ),
     }
+    if config.split.strategy == "kfold":
+        audit["cv_metadata"] = getattr(session, "cv_metadata", {})
     sequence_plan = getattr(session, "sequence_plan", None)
     if sequence_plan is not None:
         audit["sequence_plan_manifest"] = sequence_plan.to_dict()
@@ -1350,6 +1425,11 @@ def load_model(path: str | Path) -> FittedModel:
         model = joblib.load(source)
     except Exception as exc:
         raise ArtifactError(f"Could not load model artifact {source}: {exc}") from exc
+    evaluation_session = model.get("session") if isinstance(model, dict) else model
+    if (isinstance(evaluation_session, ExperimentSession)
+            and evaluation_session.fit_scope == "cv_development"
+            and evaluation_session.fitted_model is None):
+        raise ArtifactError("这是交叉验证评估会话，尚无最终模型；请先冻结参数，在开发集重新训练后再导出或载入模型。")
     if isinstance(model, dict) and model.get("kind") == "pyml_workbench.extended_cpu_model":
         try:
             from .extended_experiment import load_extended_model

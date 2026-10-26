@@ -20,15 +20,39 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('distribution', type=Path)
     parser.add_argument('evidence', type=Path)
-    parser.add_argument('--profile', choices=('standard', 'full'),
+    parser.add_argument('--profile', choices=('standard', 'deep', 'full'),
                         help='also verify that profile exclusions are absent from both EXEs')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    modules = ('pyml_workbench', 'pyml_workbench.gui', 'pyml_workbench.guide',
-               'pyml_workbench._worker', 'pyml_workbench.checkpoints',
-               'pyml_workbench.preferences', 'pyml_workbench.batch_gui',
-               'pyml_workbench.batch', 'pyml_workbench.history',
-               'pyml_workbench.search', 'pyml_workbench.selection')
+    modules = (
+        'pyml_workbench',
+        'pyml_workbench.gui',
+        'pyml_workbench.data',
+        'pyml_workbench.windows_identity',
+        'pyml_workbench.guide',
+        'pyml_workbench.environment_check',
+        'pyml_workbench.environment_dialog',
+        'pyml_workbench.plugins',
+        'pyml_workbench.plugin_dialog',
+        'pyml_workbench._worker',
+        'pyml_workbench.checkpoints',
+        'pyml_workbench.preferences',
+        'pyml_workbench.batch_gui',
+        'pyml_workbench.batch',
+        'pyml_workbench.history',
+        'pyml_workbench.config',
+        'pyml_workbench.preprocessing',
+        'pyml_workbench.search',
+        'pyml_workbench.selection',
+        'pyml_workbench.cross_validation',
+        'pyml_workbench.cv_experiment',
+        'pyml_workbench.experiment',
+        'pyml_workbench.extended_experiment',
+        'pyml_workbench.plot_cache',
+        'pyml_workbench.plotting',
+        'pyml_workbench.plot_dialog',
+        'pyml_workbench.evaluation_ui',
+    )
     checked = []
     exclusions = []
     if args.profile:

@@ -14,7 +14,7 @@
 
 ## 准备配置与读取数据
 
-核心数据配置由 `DatasetConfig`、`SplitConfig` 和 `ExperimentConfig` 组成。`DatasetConfig` 接受 CSV/XLSX/XLS 路径、可选工作表名、目标列名和特征列；监督任务必须指定目标列。`SplitConfig` 默认使用 seed 42 与固定的 60/20/20 划分。`ExperimentConfig` 再指定任务、模型 ID、参数、可选序列配置和输出目录。
+核心数据配置由 `DatasetConfig`、`SplitConfig` 和 `ExperimentConfig` 组成。`DatasetConfig` 接受 CSV/XLSX/XLS 路径、可选工作表名、目标列名和特征列；监督任务必须指定目标列。`SplitConfig` 默认使用 seed 42 与固定的 60/20/20 划分。`ExperimentConfig` 再指定任务、模型 ID、参数、可选序列配置、可选训练前降维方法及输出维数和输出目录。
 
 ```python
 from pyml_workbench import DatasetConfig, ExperimentConfig, SequenceConfig, SplitConfig
@@ -34,6 +34,10 @@ config = ExperimentConfig(
 ```
 
 `ExperimentConfig.sequence` 可选接收 `SequenceConfig`，用于 HMM 和窗口回归模型。未设置分组/时间列时，源文件行顺序表示一条序列；指定分组后会将整组分配到同一个 train、validation 或 test 分区，指定时间列后会在每组内稳定排序。`preview_dataset(path, rows=20)` 返回样本、列名/类型、缺失数和 Excel 工作表；`load_dataset(path)` 返回完整的 `LoadedDataset`。`select_features_target(dataset, task=..., target_column=..., feature_columns=...)` 返回列副本并拒绝缺失监督目标。读取函数不会写入原始文件。
+
+`ExperimentConfig.reduction_method` 与 `reduction_components` 必须同时设置或同时省略。方法可选 `pca`、`truncated_svd`、`fast_ica`、`gaussian_random_projection` 和 `kernel_pca`；`SplitConfig.seed` 会作为降维器的随机种子。降维接在缺失值填补、数值缩放和类别独热编码之后，仅使用当前流程允许的拟合分区拟合；验证、测试、交叉验证折外预测和推理调用已拟合变换。输出维数必须小于预处理后的输入特征数；PCA、TruncatedSVD 和 FastICA 还受拟合行数限制，PCA、TruncatedSVD、FastICA 和 KernelPCA 另外受训练数据有效秩限制。超出限制时准备阶段会明确报错。拟合结果在模型 `preprocessing["reduction"]` 中记录方法、配置、输入/输出维数和拟合范围；PCA 还记录组件解释方差。
+
+`ExperimentConfig.pca_components` 是旧版 PCA 配置字段，仍可接收正整数；缺省或 `None` 表示不启用。只包含该旧字段的 preset 会保留其旧 canonical 表示；在界面中更改方法或维数后，配置会改用 `reduction_method="pca"` 和 `reduction_components`。训练前降维会产生连续且可能为负的分量，因此不能与要求非负输入的 MultinomialNB/ComplementNB、要求非负整数类别 ID 的 CategoricalNB、独立降维任务或 HMM/窗口回归模型组合。
 
 ## 显式控制验证与最终测试
 

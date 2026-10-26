@@ -57,6 +57,9 @@ def main() -> int:
     ]
     package_command = [sys.executable, str(root / 'packaging/release.py'),
                        '--profile', profile_name, '--release-dir', str(dist_dir)]
+    verify_command = [sys.executable, str(root / 'packaging/verify_frozen_sources.py'),
+                      str(dist_dir), str(root / f'delivery/exe-{profile_name}-source-check'),
+                      '--profile', profile_name]
     if archive_override is not None:
         package_command += ['--archive-path', str(archive_override)]
     plan = {
@@ -66,7 +69,7 @@ def main() -> int:
         'uv_extras': profile['extras'],
         'expected_output_folder': str(dist_dir),
         'expected_archive_pattern': str(archive_override or archive_prefix),
-        'commands': [build_command, package_command],
+        'commands': [build_command, verify_command, package_command],
     }
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2), flush=True)
@@ -91,6 +94,7 @@ def main() -> int:
     environment = os.environ.copy()
     environment['PYML_PACKAGE_PROFILE'] = profile_name
     subprocess.run(build_command, cwd=root, env=environment, check=True)
+    subprocess.run(verify_command, cwd=root, check=True)
     subprocess.run(package_command, cwd=root, check=True)
     return 0
 

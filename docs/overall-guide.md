@@ -1,6 +1,6 @@
 # PY-ML 工作台操作指南
 
-适用版本：0.4.4 · 界面更新于 2026-10-08。面向 Windows 桌面用户和 Python 调用者。
+适用版本：0.4.5 · 界面更新于 2026-10-11。面向 Windows 桌面用户和 Python 调用者。
 
 工作台调用 scikit-learn、hmmlearn、PyTorch/skorch、Optuna、pymoo 和 SciPy 等开源组件。当前目录包含 84 个模型：71 个传统模型、6 个提升树模型、3 个隐马尔可夫模型（HMM）和 4 个深度模型。可用操作取决于模型和参数；每个模型并不都能对新样本预测。
 
@@ -10,9 +10,13 @@
 
 ## 1. 启动和阅读指南
 
-**EXE 用户：** 完整解压所选的 profile ZIP，双击 `PYML-Workbench.exe`。保留同目录的 `PYML-Worker.exe` 与 `_internal`，搬到其他位置时复制整个文件夹。`standard` 包含桌面向导、71 个 scikit-learn 模型，以及 Grid/随机/退火搜索；`full` 还包含 HMM、PyTorch/skorch 深度模型、TPE 与遗传搜索。两种发行均不包含 XGBoost、LightGBM 或 CatBoost SDK。模型目录仍可浏览；当前环境缺少依赖的模型无法运行，模型列表会指出所缺模块和对应 extra。需要扩展功能时，请使用安装了相应 extras 的源码环境。
+数据转换插件可在“插件 → 设置…”或“格式 → 数据转换 → 插件设置…”统一配置。分别填写 HyperEEG 和 PYfNIRs 的插件目录，最后点击“保存”，两项配置可以同时保留。未配置的转换入口默认置灰；各自有效配置保存后立即启用，重新启动时自动恢复。目录失效时对应入口重新置灰，可返回设置修改或清除该项。
+
+**EXE 用户：** 完整解压所选的 profile ZIP，双击 `PYML-Workbench.exe`。保留同目录的 `PYML-Worker.exe` 与 `_internal`，搬到其他位置时复制整个文件夹。`standard` 包含桌面向导、71 个 scikit-learn 模型，以及 Grid/随机/退火搜索；`deep` 在此基础上包含 PyTorch/skorch 深度模型；`full` 还包含 HMM、TPE 与遗传搜索。三个 profile 都不包含 XGBoost、LightGBM 或 CatBoost SDK。模型目录仍可浏览；当前环境缺少依赖的模型无法运行，模型列表会指出所缺模块和对应 extra。
 
 首次解压后启动可能需要等待几十秒；本机复制测量约 38 秒，后续启动约 3 秒。请等待主窗口出现，实际耗时取决于电脑和运行环境。
+
+需要确认环境是否齐全时，打开“帮助 → 检查运行环境…”，首次打开自动开始检查。窗口逐项显示 Python 与运行架构、依赖的要求版本和实际版本、加载结果、离线指南与模型目录；EXE 还核对后台程序、运行库目录和发行配置。必需组件异常会提示环境不完整；标准版未安装的可选组件单独列出，不影响基础功能的通过结论。可停止或重新检查，并用“复制报告”保留结果。Python 环境按报告中的 `uv sync` 命令同步并重启；EXE 缺文件时重新完整解压发行包。检查不执行训练或安装组件。
 
 **源码用户：** 需要 Python 3.12 x64 和 uv，在项目根目录打开 PowerShell，执行：
 
@@ -21,7 +25,7 @@ uv sync --locked --no-editable --no-dev --extra desktop
 .\run_pyml_workbench.bat
 ```
 
-要在源码环境中安装 HMM、深度模型与完整搜索，再在命令上追加 `--extra search --extra sequence --extra deep`。三种提升树 SDK 各自独立安装：XGBoost 用 `--extra xgboost`，LightGBM 用 `--extra lightgbm`，CatBoost 用 `--extra catboost`；`standard` 和 `full` 都不会自动安装这些 SDK。Grid、随机和退火不需要 `search` extra。
+要在源码环境中安装 HMM、深度模型与完整搜索，再在命令上追加 `--extra search --extra sequence --extra deep`。三种提升树 SDK 各自独立安装：XGBoost 用 `--extra xgboost`，LightGBM 用 `--extra lightgbm`，CatBoost 用 `--extra catboost`；`standard`、`deep` 和 `full` 都不会自动安装这些 SDK。Grid、随机和退火不需要 `search` extra。
 
 启动器使用项目已有的 `.venv`，也可执行：
 
@@ -200,7 +204,7 @@ SVC 若要预测概率，训练前需设置 `probability=true`；LOF 若要对�
 
 **评分目标：** 分类默认最大化 balanced accuracy；回归最小化 RMSE；聚类最大化有效 silhouette（有覆盖率要求）；降维最大化 trustworthiness；HMM 最大化每观测对数似然。异常检测自动搜索需要独立的 `objective_labels_column`，评分标签须有异常 -1 和正常 +1，可用 `label_mapping` 映射；它不能作为输入特征。没有留出操作/有效分数的模型无法成为验证 winner。`train_exploratory` 只做训练探索，不进入验证榜，不能冻结或最终测试。
 
-**预算按每个“数据集 × 模型”组合计算：** 最多 50 次真实搜索拟合、250 次 proposals（提案）、1200 秒活动时长；可设置更低值。队列最多 2 个 worker，每个 worker 的数值线程为 1。无效/重复提案可能占 proposal，缓存命中不增加真实拟合数，已经进入 fit 的失败会消耗拟合预算。活动时限在检查点生效，不保证立即中断正在执行的拟合；暂停等待时间不计入活动时长。
+**预算按每个“数据集 × 模型”组合计算：** 最多 50 次候选评估、250 次 proposals（提案）、1200 秒活动时长；可设置更低值。队列最多 2 个 worker，每个 worker 的数值线程为 1。预算按有效且未命中缓存、已开始评估的候选计数，评估失败仍消耗一次；无效提案和缓存命中不增加候选评估计数。此预算统计的是候选评估，不是底层模型拟合次数：留出法下每个候选通常拟合一次，K 折下每个候选通常训练 K 个折模型；冻结 winner 后的完整开发集重拟合和最终测试在搜索预算之外。活动时限在检查点生效，不保证立即中断正在执行的拟合；暂停等待时间不计入活动时长。
 
 操作顺序：
 

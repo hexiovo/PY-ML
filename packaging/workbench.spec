@@ -37,6 +37,7 @@ datas = collect_data_files('pyml_workbench')
 # One source document is used by both the public docs and the offline viewer.
 datas += [(str(root / 'docs/overall-guide.md'), 'pyml_workbench/resources')]
 datas += [(str(root / 'docs/assets/guide-ui'), 'pyml_workbench/resources/assets/guide-ui')]
+datas += [(str(root / 'assets/icons/workbench-desktop.ico'), 'pyml_workbench/resources')]
 for package in ['pyml-workbench', *profile['runtime_distributions']]:
     datas += copy_metadata(package)
 a = Analysis([str(root / 'packaging/desktop_entry.py'), str(root / 'packaging/worker_entry.py')],
@@ -58,6 +59,7 @@ splash = CrispSplash(str(root / 'assets/startup/opening.png'), binaries=a.binari
     text_color='#475569', text_default='正在加载运行组件，请稍候…',
     always_on_top=True, center='active')
 gui = EXE(pyz, gui_scripts, splash, [], exclude_binaries=True, name='PYML-Workbench',
+    icon=str(root / 'assets/icons/workbench-desktop.ico'),
     manifest=str(root / 'packaging/gui.manifest'),
     debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False)
 worker = EXE(pyz, worker_scripts, [], exclude_binaries=True, name='PYML-Worker',

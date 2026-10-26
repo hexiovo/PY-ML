@@ -188,8 +188,6 @@ def _load(
     snapshot, digest = _canonical_config(session.config)
     if (snapshot != session.frozen_config or digest != session.frozen_config_sha256
             or digest != value.get("frozen_config_sha256")
-            or session.fitted_model.config != snapshot
-            or session.fitted_model.frozen_config_sha256 != digest
             or _canonical_config(config)[1] != digest):
         raise SessionError("Configuration changed since training; discard this session and retrain")
     source = Path(session.source_path)
@@ -203,6 +201,18 @@ def _load(
     state = value.get("state")
     if state not in {"trained", "frozen", "testing", "tested", "test_failed", "test_cancelled"}:
         raise SessionError("Session state is invalid")
+    if session.fitted_model is None:
+        if state != "trained" or config.split.strategy != "kfold":
+            raise SessionError("Only an unfrozen K-fold evaluation session may have no fitted model")
+        from .cv_experiment import verify_cv_session
+
+        try:
+            verify_cv_session(session, config=config)
+        except Exception as exc:
+            raise SessionError(f"Saved CV evaluation session is invalid: {exc}") from exc
+    elif (session.fitted_model.config != snapshot
+            or session.fitted_model.frozen_config_sha256 != digest):
+        raise SessionError("Session fitted model does not belong to its frozen configuration")
     if state == "testing" and not allow_interrupted_test:
         raise SessionError("Final test was interrupted without an explicit safe-shutdown recovery")
     if state == "testing" and (not session.frozen or session.finalized
@@ -231,17 +241,26 @@ def _summary(envelope: dict[str, Any]) -> dict[str, Any]:
     session = envelope["session"]
     sequence_summary = sequence_plan_summary(getattr(session, "sequence_plan", None))
     failed_test = envelope["state"] in {"test_failed", "test_cancelled"}
+    is_cv = session.config.split.strategy == "kfold"
+    if failed_test and is_cv:
+        metrics = {key: value for key, value in session.metrics.items() if key != "test"}
+    elif failed_test:
+        metrics = {key: value for key, value in session.metrics.items()
+                   if key in {"train", "validation", "selection"}}
+    elif is_cv and session.fitted_model is None:
+        metrics = {key: value for key, value in session.metrics.items() if key != "test"}
+    else:
+        metrics = session.metrics
+    capabilities = session.fitted_model.capabilities if session.fitted_model is not None else {}
     return {
         "session_path": envelope["session_path"], "state": envelope["state"],
-        "metrics": ({key: value for key, value in session.metrics.items()
-                     if key in {"train", "validation", "selection"}}
-                    if failed_test else session.metrics),
+        "metrics": metrics,
         "events": [event for event in session.events if not failed_test or not event.startswith("test_")],
         "training_curves": _session_training_curves(session),
         "sequence_summary": sequence_summary,
         "frozen_config_sha256": session.frozen_config_sha256,
         "input_fingerprint": _input_fingerprint(session),
-        "capabilities": session.fitted_model.capabilities,
+        "capabilities": capabilities,
         "test_evaluation_count": 0 if failed_test else session.test_evaluation_count,
         "audit": session.result.audit if session.result is not None and not failed_test else None,
     }
@@ -291,7 +310,15 @@ def _session_action(args, context: dict[str, Any]) -> None:
         if state in {"test_failed", "test_cancelled"}:
             raise SessionError("Final test failed or was cancelled; this session cannot be tested or relabelled again")
         if args.action == "freeze":
-            freeze_experiment(session, config)
+            if state == "trained" and session.fitted_model is None:
+                if config.split.strategy != "kfold":
+                    raise SessionError("Cannot freeze a session without a fitted model")
+                from .cv_experiment import refit_cv_session
+
+                session = refit_cv_session(session, expected_config=config, on_event=callback)
+                envelope["session"] = session
+            else:
+                freeze_experiment(session, config)
             if state == "trained":
                 envelope["state"] = "frozen"
                 _save(path, envelope)
@@ -527,6 +554,10 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     raw = sys.argv[1:] if argv is None else argv
+    if raw == ["environment-check"]:
+        from .environment_check import main as check_environment
+
+        return check_environment()
     context = {"action": raw[0] if raw else None, "operation": raw[0] if raw else None, "session_id": None, "_stdout": sys.stdout}
     log_session = LogSession(
         log_root=os.environ.get("PYML_LOG_ROOT") or None,
