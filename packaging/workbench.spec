@@ -46,6 +46,21 @@ a = Analysis([str(root / 'packaging/desktop_entry.py'), str(root / 'packaging/wo
     runtime_hooks=[str(root / 'packaging/runtime_hook.py')],
     excludes=['tkinter', 'IPython', 'notebook', 'pytest', 'sphinx', *profile['exclude_modules']],
     noarchive=False)
+# ModuleGraph may retain an older code object even when its TOC points at the
+# current source. Recompile this application's modules before creating the PYZ;
+# leave third-party graph transformations and their cached code untouched.
+from PyInstaller.config import CONF
+project_code_cache = CONF['code_cache'].setdefault(id(a.pure), {})
+for module_name, source_path, typecode in a.pure:
+    if module_name == 'pyml_workbench' or module_name.startswith('pyml_workbench.'):
+        if source_path in {'-', None}:
+            continue
+        source_file = Path(source_path).resolve()
+        assert source_file.is_relative_to((root / 'src').resolve()), source_file
+        project_code_cache[module_name] = compile(
+            source_file.read_bytes(), str(source_file), 'exec',
+            dont_inherit=True, optimize=0,
+        )
 pyz = PYZ(a.pure)
 gui_scripts = [entry for entry in a.scripts if entry[0] != 'worker_entry']
 worker_scripts = [entry for entry in a.scripts if entry[0] not in {'desktop_entry', 'pyi_rth_pyside6'}]
