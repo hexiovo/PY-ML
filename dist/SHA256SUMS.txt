@@ -28,3 +28,12 @@ cc1af7fa1fbae362cb153c2efed0febbe8d3bf67e7fdf577fd355febc63c36d5  startup-202610
 dfa93f9a9cec26387443d108cd7b60b983236a475a8294b185d4ccd976e82584  ui-polish-20261008/PYML-Workbench-standard/PYML-Workbench.exe
 45a7e88d532d7b5e95a9a3011b028f4388789ff58eba07f79d7fa20250cbfb81  ui-polish-20261008/PYML-Workbench-standard/PYML-Worker.exe
 07b77c2e55be58407d0860a557bb75ca1aa92b640e5ed36871036cf9553015f5  PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip
+a92794ad293d2c11e635f98ee8dd9ea88122be8d39b2b31d3ee656f8b94a12c6  PYML-Workbench-full/PYML-Workbench.exe
+9e4772b4d24f92f71a364ce2d9c47c18fba6f307f567af2ccea9bbfb9ae68a80  PYML-Workbench-full/PYML-Worker.exe
+c761a8d28c2839179f30ca48c8f40bfb68294f640a10e661039425a656d2865a  PYML-Workbench-0.4.4-windows-x64-full.zip
+7e4e4701e6a22b1d9470ffab72081d3290e1e3318736402a9963abefe8e67f39  complete/PYML-Workbench-full/PYML-Workbench.exe
+f98a7327613306c4e9ba5088a9919102a6fb8790a42266303c6039a379f42ee7  complete/PYML-Workbench-full/PYML-Worker.exe
+d90c5d4a8d8a3f8045280f74d90ff3bc98eb5194f540110686f604cb78981916  PYML-Workbench-0.4.4-windows-x64-all-models.zip
+1356e155299edb8cb7dbacf7576a23d7da5522ac07596fe21fb0806dbd4beebf  model-expansion-20261027/PYML-Workbench-full/PYML-Workbench.exe
+59e9e30aacb83e04c4d0fa819d32b1ad97e236bfa822c31906d3e6ca2cc2cd85  model-expansion-20261027/PYML-Workbench-full/PYML-Worker.exe
+3b5ae938a8d546a0897abaca4da869ce416af39ffa7697cb4191ada682e1b22e  PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip

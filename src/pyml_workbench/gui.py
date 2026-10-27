@@ -22,7 +22,8 @@ import joblib
 import pandas as pd
 
 from .catalog import list_models
-from .config import DatasetConfig, ExperimentConfig, SplitConfig
+from .config import DatasetConfig, ExperimentConfig, SplitConfig, EvaluationConfig
+from .metrics import metric_choices, metric_direction
 from .data import LoadedDataset, load_dataset
 from .parameters import parameter_defaults, parameter_schema
 from .preferences import (
@@ -35,8 +36,10 @@ from .preferences import (
 from .checkpoints import CheckpointError, load_checkpoint, save_checkpoint
 from .runtime import worker_command
 from .run_timing import (
+    ACTION_STAGE_LABELS,
+    DEFAULT_ACTION_ESTIMATES_SECONDS,
     RunTiming,
-    SHORT_STEP_REFERENCE_SECONDS,
+    SearchTimingEstimator,
     format_duration,
     summarize_batch_outcomes,
 )
@@ -164,6 +167,37 @@ EVENT_LABELS = {
     "test_metrics_computed_once": "已一次性计算最终测试指标",
     "test_not_evaluated_capability_guard": "模型能力限制阻止最终测试评估",
 }
+
+_WORKER_NEXT_STAGES = {
+    "preparing": ("正在读取并准备数据", 60.0),
+    "dataset_loaded": ("正在检查目标列并建立数据划分", 15.0),
+    "target_validated": ("正在建立训练、验证和测试划分", 10.0),
+    "split_created": ("正在拟合训练集预处理器", 30.0),
+    "preprocessor_fit_train_only": ("正在拟合模型", 60.0),
+    "preprocessor_fit_train_validation_only": ("正在拟合获胜模型", 60.0),
+    "estimator_fit_train_only": ("正在计算训练与验证指标", 20.0),
+    "estimator_fit_train_validation_only": ("正在计算重拟合指标", 20.0),
+    "train_metrics_computed": ("正在计算验证指标", 15.0),
+    "refit_metrics_computed": ("正在保存重拟合结果", 15.0),
+    "validation_metrics_computed": ("正在保存训练与验证结果", 15.0),
+    "selection_frozen": ("正在整理并保存训练结果", 15.0),
+    "refit_train_validation_only": ("正在保存获胜模型重拟合结果", 15.0),
+    "test_metrics_computed_once": ("正在保存最终测试结果", 15.0),
+    "refit_started": ("正在使用训练与验证数据重拟合获胜模型", 60.0),
+    "refit_completed": ("正在执行一次最终测试", 30.0),
+    "test_started": ("正在执行一次最终测试", 30.0),
+    "test_completed": ("正在保存最终测试结果", 15.0),
+    "inference": ("正在执行新数据推理并保存结果", 30.0),
+}
+
+
+def _valid_nonnegative_finite_worker_number(value: Any) -> bool:
+    if type(value) not in {int, float} or value < 0:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
 
 OPERATION_LABELS = {
     "predict": "预测",
@@ -1115,6 +1149,12 @@ class WorkbenchWindow(QMainWindow):
         self._wizard_total_fits: int | None = None
         self._wizard_job_models: dict[str, str] = {}
         self._wizard_job_fit_counts: dict[str, int] = {}
+        self._wizard_fit_event_ids: dict[str, set[str]] = {}
+        self._wizard_job_states: dict[str, str] = {}
+        self._wizard_job_phases: dict[str, str] = {}
+        self._wizard_active_fit_tokens: dict[str, str] = {}
+        self._wizard_search_specs: list[dict[str, Any]] = []
+        self._wizard_search_timing: SearchTimingEstimator | None = None
         self._wizard_validation_metrics: dict[str, dict[str, Any]] = {}
         self._wizard_selected_metrics: list[str] = []
         self._wizard_batch_directory: Path | None = None
@@ -1953,6 +1993,12 @@ class WorkbenchWindow(QMainWindow):
                 allow_nan=False,
             )
         )
+        saved = config.to_dict()
+        self.evaluation_config_edit.setPlainText(json.dumps({
+            "split": {key: value for key, value in saved["split"].items() if key in {"strategy", "group_column", "time_column"}},
+            **({"cross_validation": saved["evaluation"]} if config.evaluation is not None else {}),
+            **({"reference_labels_column": config.dataset.reference_labels_column} if config.dataset.reference_labels_column else {}),
+        }, ensure_ascii=False, indent=2))
         self._split_fractions = config.split
         self.seed_spin.setValue(config.split.seed)
         self.source_path_edit.setText(config.dataset.source_path)
@@ -2268,6 +2314,15 @@ class WorkbenchWindow(QMainWindow):
         model_layout.addWidget(self.sequence_config_label)
         model_layout.addWidget(self.sequence_config_edit)
         model_layout.addWidget(self.sequence_config_help)
+        self.evaluation_config_label = QLabel("划分与评价 JSON：split 可选 random/group/time；cross_validation 可设 folds、strategy、gap；reference_labels_column 用于聚类/异常标签。")
+        self.evaluation_config_label.setWordWrap(True)
+        self.evaluation_config_edit = QPlainTextEdit()
+        self.evaluation_config_edit.setAccessibleName("划分与交叉验证配置 JSON")
+        self.evaluation_config_edit.setMaximumHeight(96)
+        self.evaluation_config_edit.setPlaceholderText('{"split":{"strategy":"time","time_column":"time"},"cross_validation":{"folds":5,"strategy":"time","gap":0}}')
+        self.evaluation_config_edit.setPlainText("{}")
+        model_layout.addWidget(self.evaluation_config_label)
+        model_layout.addWidget(self.evaluation_config_edit)
         layout.addWidget(self.model_group)
 
         self.resource_group = QGroupBox("运行资源")
@@ -2349,7 +2404,8 @@ class WorkbenchWindow(QMainWindow):
         self.monitor_stage_label.setWordWrap(True)
         self.monitor_start_label = QLabel("开始时间：—")
         self.monitor_elapsed_label = QLabel("已用时间：0 秒")
-        self.monitor_eta_label = QLabel("预计剩余时间：等待首个阶段完成后估算")
+        self.monitor_eta_label = QLabel("预计当前阶段完成：初始参考估算")
+        self.monitor_eta_label.setWordWrap(True)
         self.monitor_end_label = QLabel("实际结束时间：—")
         monitor_layout.addWidget(self.monitor_stage_label)
         monitor_layout.addWidget(self.monitor_start_label)
@@ -2565,6 +2621,7 @@ class WorkbenchWindow(QMainWindow):
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.advanced_parameters.textChanged.connect(self._on_configuration_changed)
         self.sequence_config_edit.textChanged.connect(self._on_sequence_config_changed)
+        self.evaluation_config_edit.textChanged.connect(self._on_sequence_config_changed)
         self.seed_spin.textChanged.connect(self._on_configuration_changed)
         self.output_dir_edit.textChanged.connect(self._on_configuration_changed)
         self.output_browse_button.clicked.connect(self._browse_output_directory)
@@ -2699,14 +2756,7 @@ class WorkbenchWindow(QMainWindow):
             )
             self.algorithm_list.addItem(item)
         self.algorithm_list.blockSignals(False)
-        task_metrics = {
-            "classification": [("balanced_accuracy", "平衡准确率（验证搜索目标）")],
-            "regression": [("rmse", "RMSE（验证搜索目标）")],
-            "clustering": [("silhouette", "轮廓系数")],
-            "dimensionality reduction": [("trustworthiness", "Trustworthiness")],
-            "anomaly detection": [("balanced_accuracy", "平衡准确率")],
-            "sequence_modeling": [("log_likelihood_per_observation", "每个观测的对数似然")],
-        }
+        task_metrics = {name: metric_choices(name) for name in ("classification", "regression", "clustering", "dimensionality reduction", "anomaly detection", "sequence_modeling")}
         current_metric = self.compare_metric_combo.currentData()
         self.compare_metric_combo.blockSignals(True)
         self.compare_metric_combo.clear()
@@ -2716,14 +2766,8 @@ class WorkbenchWindow(QMainWindow):
         if match >= 0:
             self.compare_metric_combo.setCurrentIndex(match)
         self.compare_metric_combo.blockSignals(False)
-        metrics_catalog = {
-            "classification": [("accuracy", "准确率"), ("balanced_accuracy", "平衡准确率"), ("precision_macro", "宏平均精确率"), ("recall_macro", "宏平均召回率"), ("f1_macro", "宏平均 F1")],
-            "regression": [("r2", "R²"), ("mae", "MAE"), ("rmse", "RMSE")],
-            "clustering": [("silhouette", "轮廓系数"), ("calinski_harabasz", "Calinski-Harabasz"), ("davies_bouldin", "Davies-Bouldin")],
-            "dimensionality reduction": [("trustworthiness", "Trustworthiness")],
-            "anomaly detection": [("outlier_fraction", "异常比例"), ("mean_score_samples", "平均样本分数")],
-            "sequence_modeling": [("log_likelihood_per_observation", "每个观测的对数似然")],
-        }
+        metrics_catalog = dict(task_metrics)
+        metrics_catalog["anomaly detection"] = [("outlier_fraction", "异常比例"), ("mean_score_samples", "平均样本分数"), *metric_choices("anomaly detection")]
         prior_metrics = {
             str(self.validation_metrics_list.item(index).data(Qt.ItemDataRole.UserRole))
             for index in range(self.validation_metrics_list.count())
@@ -2891,10 +2935,10 @@ class WorkbenchWindow(QMainWindow):
             metric = str(self.compare_metric_combo.currentData() or "")
             if base_config.task == "anomaly detection":
                 raise ValueError("异常检测多模型搜索需要独立标注列和映射；请使用批量高级入口配置标签列。")
-            direction = "min" if metric in {"rmse", "mae"} else "max"
+            direction = metric_direction(base_config.task, metric)
             requests = []
             for model_id in selected_models:
-                sequence = base_config.sequence if model_id in {"H01", "H02", "H03", "N04", "N06"} else None
+                sequence = base_config.sequence if model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"} else None
                 parameters = dict(base_config.parameters) if model_id == base_config.model_id else {}
                 if model_id == "N01":
                     parameters["device"] = str(self.compute_device_combo.currentData() or "cpu")
@@ -2906,6 +2950,7 @@ class WorkbenchWindow(QMainWindow):
                     split=base_config.split,
                     output_dir=None,
                     sequence=sequence,
+                    evaluation=base_config.evaluation,
                 )
                 candidate.validate()
                 try:
@@ -2945,15 +2990,35 @@ class WorkbenchWindow(QMainWindow):
         self._batch_run_payload = None
         self._wizard_job_models.clear()
         self._wizard_job_fit_counts.clear()
+        self._wizard_fit_event_ids.clear()
+        self._wizard_job_states.clear()
+        self._wizard_job_phases.clear()
+        self._wizard_active_fit_tokens.clear()
         self._wizard_validation_metrics.clear()
         self._wizard_selected_metrics = selected_metrics
         self._wizard_completed_fits = 0
         self._wizard_total_fits = len(selected_models) * self.search_fits_spin.value()
+        self._wizard_search_specs = [dict(request["spec"]) for request in requests]
+        self._wizard_search_timing = SearchTimingEstimator(
+            parallel_workers=self.parallel_workers_spin.value()
+        )
+        for index, request in enumerate(requests):
+            model_id = str(request.get("config", {}).get("model_id") or f"模型 {index + 1}")
+            pending_id = f"pending-{index}"
+            self._wizard_job_models[pending_id] = model_id
+            self._wizard_job_states[pending_id] = "queued"
+            self._wizard_job_phases[pending_id] = "等待搜索任务启动"
+            self._wizard_search_timing.configure_job(
+                pending_id, request["spec"], model_label=model_id
+            )
         self._wizard_run_started_at = time.monotonic()
         self.progress_bar.setRange(0, max(1, self._wizard_total_fits))
         self.progress_bar.setValue(0)
-        self.monitor_stage_label.setText("正在预检并启动所选算法。")
-        self.monitor_eta_label.setText("预计剩余时间：等待首个验证结果后估算")
+        self.monitor_stage_label.setText(ACTION_STAGE_LABELS["wizard_batch"])
+        self.monitor_eta_label.setText(
+            f"预计队列搜索完成：约 {format_duration(self._wizard_search_timing.remaining_seconds())}；"
+            f"{self._wizard_search_timing.estimate_basis}，仅供参考。"
+        )
         self._wizard_monitor_timer.start()
         self._set_wizard_step(4)
         self.state_label.setText("多算法搜索运行中")
@@ -2985,22 +3050,75 @@ class WorkbenchWindow(QMainWindow):
         return True
 
     def _update_wizard_monitor(self) -> None:
+        if self._run_timing is not None and self._run_timing.action == "wizard_batch":
+            self._update_wizard_stage_summary()
         if self._run_timing is not None:
-            if (
-                self._run_timing.action in {"train", "wizard_batch"}
-                and type(self._wizard_completed_fits) is int
-                and self._wizard_completed_fits >= 0
-                and type(self._wizard_total_fits) is int
-                and self._wizard_total_fits > 0
-            ):
-                self._run_timing.update_progress(
-                    self._wizard_completed_fits,
-                    self._wizard_total_fits,
-                )
             self._refresh_worker_timing()
         started = self._wizard_run_started_at
         if started is None:
             return
+
+    def _wizard_search_pause_counts(self) -> tuple[int, int, int]:
+        pending = [
+            state for state in self._wizard_job_states.values()
+            if state != "finished"
+        ]
+        paused = sum(state == "paused" for state in pending)
+        running = sum(state == "running" for state in pending)
+        queued = sum(state == "queued" for state in pending)
+        return paused, running, queued
+
+    def _update_wizard_stage_summary(self) -> None:
+        timing = self._run_timing
+        if timing is None or timing.ended_monotonic is not None:
+            return
+        paused, running, queued = self._wizard_search_pause_counts()
+        pending_ids = [
+            job_id for job_id, state in self._wizard_job_states.items()
+            if state != "finished"
+        ]
+        if not pending_ids:
+            label, estimate = "搜索任务已结束，正在保存队列摘要", 5.0
+        elif paused and not running and not queued:
+            label = f"搜索队列已暂停，{paused} 个任务等待恢复"
+            estimate = 60.0
+        else:
+            fitting = [
+                self._wizard_job_models.get(job_id, "模型")
+                for job_id in pending_ids
+                if self._wizard_job_states.get(job_id) == "running"
+                and job_id in self._wizard_active_fit_tokens
+            ]
+            if fitting:
+                shown = "、".join(fitting[:2])
+                if len(fitting) > 2:
+                    shown += f"等 {len(fitting)} 个模型"
+                label = f"正在拟合：{shown}"
+                estimate = 60.0
+            else:
+                phases = []
+                for job_id in pending_ids:
+                    if self._wizard_job_states.get(job_id) != "running":
+                        continue
+                    phase = self._wizard_job_phases.get(job_id, "正在运行验证搜索")
+                    if phase not in phases:
+                        phases.append(phase)
+                if phases:
+                    shown = "；".join(phases[:2])
+                    if len(phases) > 2:
+                        shown += f"；另有 {len(phases) - 2} 个阶段"
+                    label = shown
+                else:
+                    label = "正在等待搜索任务开始"
+                estimate = 15.0 if running else 60.0
+            if paused:
+                label += f"；另有 {paused} 个任务暂停"
+            if queued:
+                label += f"；{queued} 个任务排队中"
+        if timing.stage_label != label:
+            timing.set_stage(label, estimate)
+        if self.monitor_stage_label.text() != label:
+            self.monitor_stage_label.setText(label)
 
     def _render_wizard_metric_comparison(self) -> None:
         selected = self._wizard_selected_metrics or self._selected_validation_metrics()
@@ -3258,7 +3376,7 @@ class WorkbenchWindow(QMainWindow):
                         trial_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(outcome.get("winner_trial_id") or "winner"))[:12]
                         path = model_directory / f"{safe_id}-{job_id[:8]}-{trial_id}.joblib"
                         fitted_model = session_assets[job_id].fitted_model
-                        if model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
+                        if model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}:
                             export_extended_model(fitted_model, path)
                         else:
                             joblib.dump(fitted_model, path, compress=3)
@@ -3594,17 +3712,24 @@ class WorkbenchWindow(QMainWindow):
         )
 
     def _configured_sequence_structure_columns(self) -> set[str]:
-        if self.model_combo.currentData() not in {"H01", "H02", "H03", "N04", "N06"}:
-            return set()
+        extra = set()
+        try:
+            settings = json.loads(self.evaluation_config_edit.toPlainText().strip() or "{}")
+            split = settings.get("split", {})
+            extra = {value for value in (split.get("group_column"), split.get("time_column"), settings.get("reference_labels_column")) if isinstance(value, str) and value.strip()}
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if self.model_combo.currentData() not in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
+            return extra
         text = self.sequence_config_edit.toPlainText().strip() or "{}"
         try:
             payload = json.loads(text)
             if not isinstance(payload, dict):
-                return set()
+                return extra
             sequence = SequenceConfig.from_dict(payload)
         except (json.JSONDecodeError, TypeError, ValueError):
-            return set()
-        return {
+            return extra
+        return extra | {
             value for value in (sequence.group_column, sequence.time_column)
             if isinstance(value, str) and value.strip()
         }
@@ -3795,12 +3920,12 @@ class WorkbenchWindow(QMainWindow):
             raise ValueError(selected_model.get("unavailable_reason", f"模型 {model_id} 的可选依赖不可用。"))
         self._update_target_state()
         features = self.selected_feature_columns()
-        if not features:
+        if not features and not str(model_id).startswith("T"):
             raise ValueError("请至少勾选一个特征列")
         target = self.selected_target_column()
         parameters = self._collect_parameters()
         sequence = None
-        if model_id in {"H01", "H02", "H03", "N04", "N06"}:
+        if model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
             sequence_text = self.sequence_config_edit.toPlainText().strip() or "{}"
             try:
                 sequence_value = json.loads(sequence_text)
@@ -3820,14 +3945,24 @@ class WorkbenchWindow(QMainWindow):
                 raise ValueError("结果目录不能覆盖输入文件或其父目录")
             if output_path.exists() and (not output_path.is_dir() or any(output_path.iterdir())):
                 raise ValueError("结果目录必须不存在或为空；为避免覆盖，请选择一个新目录")
+        evaluation_settings = json.loads(self.evaluation_config_edit.toPlainText().strip() or "{}")
+        if not isinstance(evaluation_settings, dict) or set(evaluation_settings) - {"split", "cross_validation", "reference_labels_column"}:
+            raise ValueError("划分与评价配置只能包含 split、cross_validation、reference_labels_column。")
+        split_options = dict(evaluation_settings.get("split", {}))
+        if set(split_options) - {"strategy", "group_column", "time_column"}:
+            raise ValueError("split 只支持 strategy、group_column、time_column。")
+        if str(model_id).startswith("T"):
+            split_options.setdefault("strategy", "time")
+        cross_validation = evaluation_settings.get("cross_validation")
         config = ExperimentConfig(
             dataset=DatasetConfig(
                 source_path=self.dataset.source_path,
                 sheet_name=self.dataset.selected_sheet,
                 target_column=target,
                 feature_columns=(
-                    None if self._feature_selection_unspecified else tuple(features)
+                    None if self._feature_selection_unspecified or str(model_id).startswith("T") else tuple(features)
                 ),
+                reference_labels_column=evaluation_settings.get("reference_labels_column"),
             ),
             task=str(task),
             model_id=str(model_id),
@@ -3837,7 +3972,9 @@ class WorkbenchWindow(QMainWindow):
                 train_fraction=self._split_fractions.train_fraction,
                 validation_fraction=self._split_fractions.validation_fraction,
                 test_fraction=self._split_fractions.test_fraction,
+                **split_options,
             ),
+            evaluation=EvaluationConfig(**cross_validation) if cross_validation is not None else None,
             output_dir=output_dir,
             sequence=sequence,
         )
@@ -3987,7 +4124,7 @@ class WorkbenchWindow(QMainWindow):
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
         self.monitor_stage_label.setText("正在启动单模型训练与验证。")
-        self.monitor_eta_label.setText("预计剩余时间：阶段估算准备中")
+        self.monitor_eta_label.setText("预计当前阶段完成：约 1 分钟（初始估计，启动后随阶段更新）。")
         self._wizard_monitor_timer.start()
         self._set_worker_busy(True)
         started = self._start_worker(
@@ -4117,6 +4254,8 @@ class WorkbenchWindow(QMainWindow):
         if self._shutting_down or self.process.state() != QProcess.ProcessState.NotRunning:
             self.last_error = "已有后台任务运行"
             return False
+        if action != "wizard_batch":
+            self._wizard_search_timing = None
         self._worker_action = action
         self._worker_output_buffer = b""
         self.stderr_text = ""
@@ -4126,14 +4265,20 @@ class WorkbenchWindow(QMainWindow):
         self.last_error_traceback = ""
         self._log_failure_forwarded = False
         self.copy_error_button.setEnabled(False)
-        self._run_timing = RunTiming(
-            action,
-            reference_seconds=SHORT_STEP_REFERENCE_SECONDS.get(action),
-        )
+        self._run_timing = RunTiming(action)
         self._run_timing_state = "running"
         self.monitor_start_label.setText("开始时间：等待后台进程启动")
         self.monitor_elapsed_label.setText("已用时间：0 秒")
-        self.monitor_eta_label.setText("预计完成：等待后台进程启动")
+        self.monitor_stage_label.setText(self._run_timing.stage_label)
+        initial_estimate = self._run_timing.remaining_seconds
+        estimate_basis = self._run_timing.estimate_basis
+        if action == "wizard_batch" and self._wizard_search_timing is not None:
+            initial_estimate = self._wizard_search_timing.remaining_seconds()
+            estimate_basis = self._wizard_search_timing.estimate_basis
+        caption = "预计队列搜索完成" if action == "wizard_batch" else "预计当前阶段完成"
+        self.monitor_eta_label.setText(
+            f"{caption}：约 {format_duration(initial_estimate)}；{estimate_basis}，仅供参考（等待后台启动）。"
+        )
         self.monitor_end_label.setText("实际结束时间：—")
         self._wizard_monitor_timer.start()
         self.process.setProcessEnvironment(self._worker_process_environment())
@@ -4170,8 +4315,49 @@ class WorkbenchWindow(QMainWindow):
         timing = self._run_timing
         if timing is None:
             return
+        if timing.ended_monotonic is not None:
+            state_label = {
+                "success": "成功", "failed": "失败", "cancelled": "已取消"
+            }.get(self._run_timing_state, self._run_timing_state)
+            if timing.started_local is not None:
+                self.monitor_start_label.setText(
+                    f"开始时间：{timing.started_local:%Y-%m-%d %H:%M:%S}"
+                )
+            self.monitor_elapsed_label.setText(
+                f"已用时间：{format_duration(timing.elapsed_seconds)}"
+            )
+            self.monitor_stage_label.setText(f"后台动作已结束（{state_label}）。")
+            self.monitor_eta_label.setText(f"预计完成：任务已结束（{state_label}）。")
+            if timing.ended_local is not None:
+                self.monitor_end_label.setText(
+                    f"实际结束时间：{timing.ended_local:%Y-%m-%d %H:%M:%S}（{state_label}）"
+                )
+            return
+        search_estimator = (
+            self._wizard_search_timing
+            if timing.action == "wizard_batch"
+            else None
+        )
+        if search_estimator is not None:
+            timing.set_remaining_estimate(
+                search_estimator.remaining_seconds(),
+                basis=search_estimator.estimate_basis,
+                exceeded=search_estimator.reference_exceeded,
+            )
+            paused, running, queued = self._wizard_search_pause_counts()
+            pending = paused + running + queued
+            if pending and paused == pending:
+                timing.pause()
+            else:
+                timing.resume()
         if timing.started_local is None:
             self.monitor_start_label.setText("开始时间：等待后台进程启动")
+            self.monitor_stage_label.setText(timing.stage_label)
+            caption = "预计队列搜索完成" if timing.action == "wizard_batch" else "预计当前阶段完成"
+            self.monitor_eta_label.setText(
+                f"{caption}：约 {format_duration(timing.remaining_seconds)}；"
+                f"{timing.estimate_basis}，仅供参考（等待后台启动）。"
+            )
             return
         self.monitor_start_label.setText(
             f"开始时间：{timing.started_local:%Y-%m-%d %H:%M:%S}"
@@ -4180,24 +4366,26 @@ class WorkbenchWindow(QMainWindow):
             f"已用时间：{format_duration(timing.elapsed_seconds)}"
         )
         remaining = timing.remaining_seconds
-        if timing.reference_exceeded:
-            self.monitor_eta_label.setText(
-                "预计完成：待估算；已超过常规短步骤约 1 分钟的理论参考，实际用时继续累计。"
+        caption = "预计队列搜索完成" if timing.action == "wizard_batch" else "预计当前阶段完成"
+        suffix = "；已超过当前参考，剩余时间仍随运行滚动估算" if timing.reference_exceeded else ""
+        paused, running, queued = self._wizard_search_pause_counts() if timing.action == "wizard_batch" else (0, 0, 0)
+        if timing.action == "wizard_batch" and paused and running + queued:
+            eta = (
+                f"{caption}：恢复暂停任务后约剩 {format_duration(remaining)} 活动用时；"
+                f"当前 {paused} 个任务暂停，完成时刻随恢复时间变化"
             )
-        elif remaining is not None and timing.expected_finish_local is not None:
-            suffix = (
-                "；依据已完成工作量估算"
-                if timing.completed_work > 0 and timing.total_work is not None
-                else "；常规短步骤理论参考约 1 分钟，不代表总时长"
-            )
-            self.monitor_eta_label.setText(
-                f"预计完成：{timing.expected_finish_local:%Y-%m-%d %H:%M:%S}；"
-                f"约剩余 {format_duration(remaining)}{suffix}。"
+        elif timing.is_paused:
+            eta = f"{caption}：当前已暂停，恢复后约剩 {format_duration(remaining)}"
+        elif timing.expected_finish_local is not None:
+            eta = (
+                f"{caption}：约 {timing.expected_finish_local:%Y-%m-%d %H:%M:%S}；"
+                f"约剩 {format_duration(remaining)}"
             )
         else:
-            self.monitor_eta_label.setText(
-                "预计完成：待估算；当前没有可靠的总体进度依据。"
-            )
+            eta = f"{caption}：约剩 {format_duration(remaining)}"
+        self.monitor_eta_label.setText(
+            f"{eta}；{timing.estimate_basis}{suffix}，仅供参考。"
+        )
 
     def _finish_worker_timing(self, state: str) -> None:
         timing = self._run_timing
@@ -4208,6 +4396,7 @@ class WorkbenchWindow(QMainWindow):
         self._wizard_monitor_timer.stop()
         self._refresh_worker_timing()
         state_label = {"success": "成功", "failed": "失败", "cancelled": "已取消"}.get(state, state)
+        self.monitor_stage_label.setText(f"后台动作已结束（{state_label}）。")
         self.monitor_eta_label.setText(f"预计完成：任务已结束（{state_label}）。")
         self.monitor_end_label.setText(
             f"实际结束时间：{ended_local:%Y-%m-%d %H:%M:%S}（{state_label}）"
@@ -4340,6 +4529,28 @@ class WorkbenchWindow(QMainWindow):
         if kind == "progress" and payload.get("data") is not None and not isinstance(payload["data"], dict):
             self._append_log("无法解析 worker 输出：progress.data 必须是对象。")
             return
+        if (
+            kind == "progress"
+            and self._worker_action == "wizard_batch"
+            and payload.get("name") == "search_started"
+        ):
+            progress_data = payload.get("data") or {}
+            resume_timing = progress_data.get("resume_timing")
+            invalid_resume = resume_timing is not None and (
+                not isinstance(resume_timing, dict)
+                or any(
+                    type(resume_timing.get(field)) is not int or resume_timing[field] < 0
+                    for field in ("completed_fit_count", "fit_duration_count")
+                )
+                or not _valid_nonnegative_finite_worker_number(
+                    resume_timing.get("fit_duration_total")
+                )
+            )
+            if invalid_resume or not isinstance(progress_data.get("spec"), dict):
+                self._append_log("无法读取搜索预算或历史估时数据，改用初始估时参考。")
+                self._wizard_search_timing = None
+                if self._run_timing is not None:
+                    self._run_timing.set_stage(self._run_timing.stage_label, 60.0)
         if kind == "error":
             if not isinstance(payload.get("error_type"), str) or not isinstance(payload.get("message"), str):
                 self._append_log("无法解析 worker 输出：error 消息缺少有效类型或说明。")
@@ -4368,6 +4579,20 @@ class WorkbenchWindow(QMainWindow):
             if "feature_columns" in payload and not isinstance(payload["feature_columns"], list):
                 self._append_log("无法解析 worker 输出：result.feature_columns 必须是数组。")
                 return
+            if (
+                (payload.get("action") or self._worker_action) == "wizard_batch"
+                and payload.get("phase") == "queued"
+            ):
+                jobs = payload.get("jobs")
+                if not isinstance(jobs, list) or any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("job_id"), str)
+                    or not item["job_id"]
+                    or ("spec" in item and not isinstance(item["spec"], dict))
+                    for item in jobs
+                ):
+                    self._append_log("无法解析 worker 输出：queued.jobs/spec 格式无效。")
+                    return
         action = str(payload.get("action") or self._worker_action or "")
         if kind == "progress":
             if self._worker_action == "wizard_batch":
@@ -4379,13 +4604,26 @@ class WorkbenchWindow(QMainWindow):
                 self.received_events.append(operation)
             if action == "train":
                 self.result_status_label.setText(str(message))
-                self.monitor_stage_label.setText(str(message))
+                next_stage = _WORKER_NEXT_STAGES.get(operation)
+                if next_stage is not None:
+                    stage_label, stage_seconds = next_stage
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(stage_label, stage_seconds)
+                    self.monitor_stage_label.setText(stage_label)
+                else:
+                    self.monitor_stage_label.setText(str(message))
                 if operation == "validation_metrics_computed":
                     self._wizard_completed_fits = 1
                     self.progress_bar.setRange(0, 1)
                     self.progress_bar.setValue(1)
-                    self.monitor_eta_label.setText("本阶段验证已完成；冻结后可明确启动一次最终测试。")
-                else:
+                self._update_wizard_monitor()
+            elif action in {"test", "selection", "inference"}:
+                next_stage = _WORKER_NEXT_STAGES.get(operation)
+                if next_stage is not None:
+                    stage_label, stage_seconds = next_stage
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(stage_label, stage_seconds)
+                    self.monitor_stage_label.setText(stage_label)
                     self._update_wizard_monitor()
         elif kind == "result":
             state = str(payload.get("state") or "")
@@ -4465,12 +4703,66 @@ class WorkbenchWindow(QMainWindow):
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         model_id = self._wizard_job_models.get(job_id, "所选模型")
         record = data.get("record") if isinstance(data.get("record"), dict) else {}
+        token = str(
+            record.get("trial_id")
+            or payload.get("trial_id")
+            or data.get("actual_fit_count", "")
+        )
+        stale_completion = False
+        if job_id:
+            active_token = self._wizard_active_fit_tokens.get(job_id)
+            seen_tokens = self._wizard_fit_event_ids.setdefault(job_id, set())
+            stale_completion = bool(
+                name == "fit_completed"
+                and token
+                and (token in seen_tokens or (active_token and active_token != token))
+            )
+            if name == "search_started":
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在运行验证搜索"
+                self._wizard_active_fit_tokens.pop(job_id, None)
+            elif name == "search_paused":
+                self._wizard_job_states[job_id] = "paused"
+                self._wizard_job_phases[job_id] = "等待恢复"
+                self._wizard_active_fit_tokens.pop(job_id, None)
+            elif name == "search_resumed":
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在继续验证搜索"
+            elif name == "search_finished":
+                self._wizard_job_states[job_id] = "finished"
+                self._wizard_job_phases[job_id] = "搜索任务已结束"
+                self._wizard_active_fit_tokens.pop(job_id, None)
+            elif name == "fit_started":
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在拟合候选模型并计算验证指标"
+                self._wizard_active_fit_tokens[job_id] = token
+            elif name == "fit_completed" and not stale_completion:
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在更新搜索结果并准备后续候选"
+                if not active_token or active_token == token:
+                    self._wizard_active_fit_tokens.pop(job_id, None)
+            elif name == "proposal":
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在生成并检查候选配置"
+            elif name == "cache_hit":
+                self._wizard_job_states[job_id] = "running"
+                self._wizard_job_phases[job_id] = "正在整理已缓存的候选结果"
+        estimator = self._wizard_search_timing
+        if estimator is not None:
+            try:
+                estimator.update_event(payload)
+            except (TypeError, ValueError, OverflowError, KeyError) as exc:
+                self._append_log(f"无法根据搜索事件更新估时，改用初始估计：{exc}")
+                self._wizard_search_timing = None
+                if self._run_timing is not None:
+                    self._run_timing.set_stage(self._run_timing.stage_label, 60.0)
         if name == "fit_started":
-            fit_index = data.get("actual_fit_count", 0)
-            self.monitor_stage_label.setText(f"{model_id} · 正在拟合第 {fit_index} 个候选模型并计算验证指标。")
+            pass
         elif name == "fit_completed":
-            completed = self._wizard_job_fit_counts.get(job_id, 0) + 1
-            self._wizard_job_fit_counts[job_id] = completed
+            seen = self._wizard_fit_event_ids.setdefault(job_id, set())
+            if token and not stale_completion and token not in seen:
+                seen.add(token)
+                self._wizard_job_fit_counts[job_id] = self._wizard_job_fit_counts.get(job_id, 0) + 1
             self._wizard_completed_fits = sum(self._wizard_job_fit_counts.values())
             if self._wizard_total_fits is not None:
                 self.progress_bar.setRange(0, max(1, self._wizard_total_fits))
@@ -4479,30 +4771,69 @@ class WorkbenchWindow(QMainWindow):
             if record.get("status") == "complete" and isinstance(metrics, dict):
                 self._wizard_validation_metrics[model_id] = dict(metrics)
                 self._render_wizard_metric_comparison()
-            self.monitor_stage_label.setText(
-                f"{model_id} · 验证拟合完成 {self._wizard_job_fit_counts[job_id]} 次；"
-                f"proposals {data.get('proposal_count', 0)}。"
-            )
-            self._update_wizard_monitor()
         elif name == "search_started":
-            self.monitor_stage_label.setText(f"{model_id} · 正在建立数据快照并开始验证搜索。")
-        elif name == "search_finished":
-            self.monitor_stage_label.setText(f"{model_id} · 本模型搜索阶段完成。")
+            history = data.get("resume_timing") if isinstance(data.get("resume_timing"), dict) else {}
+            if job_id:
+                self._wizard_job_fit_counts[job_id] = max(
+                    self._wizard_job_fit_counts.get(job_id, 0),
+                    int(history.get("completed_fit_count", 0)),
+                )
+                self._wizard_completed_fits = sum(self._wizard_job_fit_counts.values())
+                if self._wizard_total_fits is not None:
+                    self.progress_bar.setValue(min(self._wizard_completed_fits, self._wizard_total_fits))
+        self._update_wizard_monitor()
 
     def _handle_wizard_batch_result(self, payload: dict[str, Any]) -> None:
         phase = payload.get("phase")
         if phase == "queued":
             jobs = payload.get("jobs")
             if isinstance(jobs, list):
-                for job in jobs:
+                self._wizard_job_models.clear()
+                self._wizard_job_fit_counts.clear()
+                self._wizard_fit_event_ids.clear()
+                self._wizard_job_states.clear()
+                self._wizard_job_phases.clear()
+                self._wizard_active_fit_tokens.clear()
+                estimator = SearchTimingEstimator(
+                    parallel_workers=self.parallel_workers_spin.value()
+                )
+                for index, job in enumerate(jobs):
                     if not isinstance(job, dict):
                         continue
                     job_id = str(job.get("job_id") or "")
                     if job_id:
-                        self._wizard_job_models[job_id] = str(job.get("model_id") or job.get("task") or job_id)
+                        model_id = str(job.get("model_id") or job.get("task") or job_id)
+                        self._wizard_job_models[job_id] = model_id
+                        status = str(job.get("status") or "queued")
+                        self._wizard_job_states[job_id] = (
+                            status if status in {"queued", "running", "paused", "finished"}
+                            else "queued"
+                        )
+                        self._wizard_job_phases[job_id] = (
+                            "正在运行验证搜索" if status == "running" else "等待搜索任务启动"
+                        )
+                        spec = job.get("spec")
+                        if not isinstance(spec, dict) and index < len(self._wizard_search_specs):
+                            spec = self._wizard_search_specs[index]
+                        if isinstance(spec, dict):
+                            try:
+                                estimator.configure_job(job_id, spec, model_label=model_id)
+                            except (TypeError, ValueError, OverflowError, KeyError) as exc:
+                                self._append_log(
+                                    f"模型 {model_id} 的搜索预算无法用于估时，改用初始参考：{exc}"
+                                )
+                        self._wizard_job_fit_counts[job_id] = 0
+                        self._wizard_fit_event_ids[job_id] = set()
+                self._wizard_search_timing = estimator
                 self._wizard_total_fits = len(jobs) * self.search_fits_spin.value()
                 self.progress_bar.setRange(0, max(1, self._wizard_total_fits))
-            self.monitor_stage_label.setText("预检完成；已为所选模型建立持久搜索任务。")
+                self._update_wizard_monitor()
+            else:
+                label = "已完成预检；正在运行验证搜索"
+                self.monitor_stage_label.setText(label)
+                if self._run_timing is not None:
+                    self._run_timing.set_stage(label, 60.0)
+            self._update_wizard_monitor()
             return
         if phase != "finished":
             self._append_log(f"多模型 worker 结果：{json.dumps(payload, ensure_ascii=False)}")
@@ -5233,12 +5564,14 @@ class WorkbenchWindow(QMainWindow):
     def _render_metrics(self) -> None:
         self.metrics_text.setPlainText(json.dumps(self.current_metrics, ensure_ascii=False, indent=2, allow_nan=False))
         names: list[str] = []
-        for split in ("train", "validation", "test"):
+        for split in ("train", "validation", "cross_validation", "test"):
             values = self.current_metrics.get(split, {})
+            if split == "cross_validation":
+                values = values.get("mean", {})
             if not isinstance(values, dict):
                 continue
             for name, value in values.items():
-                if name in {"sample_count", "cluster_count", "noise_count"}:
+                if name in {"sample_count", "cluster_count", "noise_count", "pinball_quantile", "mase_seasonal_period", "n_neighbors"}:
                     continue
                 if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
                     if name not in names:
@@ -5317,8 +5650,10 @@ class WorkbenchWindow(QMainWindow):
         metric = self.metric_combo.currentData()
         splits: list[str] = []
         values: list[float] = []
-        for split, color in (("train", "#2563EB"), ("validation", "#F59E0B"), ("test", "#0F766E")):
+        for split, color in (("train", "#2563EB"), ("validation", "#F59E0B"), ("cross_validation", "#7C3AED"), ("test", "#0F766E")):
             entry = self.current_metrics.get(split, {})
+            if split == "cross_validation":
+                entry = entry.get("mean", {})
             value = entry.get(metric) if isinstance(entry, dict) and metric else None
             if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)):
                 splits.append(split)
@@ -5327,7 +5662,7 @@ class WorkbenchWindow(QMainWindow):
             self.metric_axes.text(0.5, 0.5, "完成验证后会显示指标图表", ha="center", va="center", color="#475569")
             self.metric_axes.set_axis_off()
         else:
-            colors = ["#2563EB" if item == "train" else "#F59E0B" if item == "validation" else "#0F766E" for item in splits]
+            colors = ["#2563EB" if item == "train" else "#F59E0B" if item == "validation" else "#7C3AED" if item == "cross_validation" else "#0F766E" for item in splits]
             bars = self.metric_axes.bar(splits, values, color=colors, width=0.58)
             self.metric_axes.set_title(str(metric), loc="left", color="#0F172A", fontsize=11, pad=10)
             self.metric_axes.set_ylabel("指标值", color="#334155")
@@ -5476,6 +5811,8 @@ class WorkbenchWindow(QMainWindow):
         self.model_path_edit.blockSignals(False)
         supported = [label for op, label in OPERATION_LABELS.items() if self.loaded_model_capabilities.get(op)]
         columns_text = f"；需要特征列：{', '.join(map(str, feature_columns))}" if feature_columns else ""
+        if model_id.startswith("T"):
+            columns_text = "；输入表格每一行代表连续的未来一步；按行数预测，无外生变量。"
         hash_text = f"；配置 SHA-256：{frozen_hash}" if frozen_hash else ""
         self.model_info_label.setText(f"已加载 {model_id}；可用操作：{', '.join(supported) or '无'}{columns_text}{hash_text}")
         self.operation_combo.blockSignals(True)
@@ -5579,7 +5916,7 @@ class WorkbenchWindow(QMainWindow):
         self._on_configuration_changed()
 
     def _update_sequence_config_state(self) -> None:
-        is_sequence = self.model_combo.currentData() in {"H01", "H02", "H03", "N04", "N06"}
+        is_sequence = self.model_combo.currentData() in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
         self.sequence_config_label.setVisible(is_sequence)
         self.sequence_config_edit.setVisible(is_sequence)
         self.sequence_config_help.setVisible(is_sequence)
@@ -5650,8 +5987,15 @@ class WorkbenchWindow(QMainWindow):
         self._wizard_batch_directory = None
         self._wizard_job_models.clear()
         self._wizard_job_fit_counts.clear()
+        self._wizard_fit_event_ids.clear()
+        self._wizard_job_states.clear()
+        self._wizard_job_phases.clear()
+        self._wizard_active_fit_tokens.clear()
         self._wizard_validation_metrics.clear()
         self._wizard_selected_metrics = []
+        self._wizard_job_states.clear()
+        self._wizard_job_phases.clear()
+        self._wizard_active_fit_tokens.clear()
         self._wizard_completed_fits = 0
         self._wizard_total_fits = None
         self._wizard_run_started_at = None

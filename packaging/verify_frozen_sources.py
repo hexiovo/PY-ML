@@ -24,11 +24,10 @@ def main():
                         help='also verify that profile exclusions are absent from both EXEs')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    modules = ('pyml_workbench', 'pyml_workbench.gui', 'pyml_workbench.guide',
-               'pyml_workbench._worker', 'pyml_workbench.checkpoints',
-               'pyml_workbench.preferences', 'pyml_workbench.batch_gui',
-               'pyml_workbench.batch', 'pyml_workbench.history',
-               'pyml_workbench.search', 'pyml_workbench.selection')
+    required = {'pyml_workbench', 'pyml_workbench.gui', 'pyml_workbench._worker',
+                'pyml_workbench.metrics', 'pyml_workbench.validation',
+                'pyml_workbench.ensembles', 'pyml_workbench.autoencoder',
+                'pyml_workbench.forecast_models', 'pyml_workbench.sequence_models'}
     checked = []
     exclusions = []
     if args.profile:
@@ -38,6 +37,9 @@ def main():
         archive = CArchiveReader(str(args.distribution / executable))
         pyz_name = next(name for name in archive.toc if name.endswith('.pyz'))
         embedded = archive.open_embedded_archive(pyz_name)
+        modules = sorted(name for name in embedded.toc
+                         if name == 'pyml_workbench' or name.startswith('pyml_workbench.'))
+        assert required.issubset(modules), (executable, 'missing application modules', required - set(modules))
         for package in exclusions:
             assert not any(name == package or name.startswith(package + '.')
                            for name in embedded.toc), (executable, 'unexpected package', package)

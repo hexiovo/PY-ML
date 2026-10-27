@@ -2,6 +2,12 @@
 
 ## 使用
 
+2026-10-27 新构建的完整扩展版：`dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip`。完整解压后双击 `PYML-Workbench.exe`，本机目录为 `dist/model-expansion-20261027/PYML-Workbench-full`。包含 111 个目录模型及本轮新增指标、融合/时序/深度模型、分组/时间划分和折评估。必须保留 `PYML-Worker.exe`、`_internal` 与全部子文件，无需安装 Python。旧发行和已安装目录未替换。
+
+本轮使用 full profile，包含三个提升树 SDK、HMM、PyTorch/skorch、UMAP、statsmodels 和全部搜索后端。详细模型 ID、指标定义与限制见[扩展指南](model-expansion.md)。PDF 继续作为先前界面的图文参考，本轮新增设置以当前离线 Markdown 指南为准。
+
+以下段落保留先前标准版的历史使用和验证说明。
+
 将 `PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip` 解压到本地文件夹，双击 `PYML-Workbench.exe`。本机程序目录为 `dist/ui-polish-20261008/PYML-Workbench-standard`，也可使用 `F:/桌面/程序/APP/PY-ML 机器学习工作台.exe` 入口。程序包含 Python 和标准版运行依赖，目标电脑无需安装 Python。
 
 启动时显示按当前屏幕 DPI 绘制的提示和动画加载条，主窗口准备好后自动关闭。底部青绿色“操作指南”按钮、帮助菜单和 F1 打开同一离线指南，命令以代码块显示。顶部菜单与嵌套子菜单支持悬停展开；不可用项置灰。点击“帮助 → 联系（GitHub Issue）”打开项目的新建 Issue 页面。
@@ -50,3 +56,13 @@ $env:PYTHONPATH=(Resolve-Path .venv/Lib/site-packages).Path
 ```
 
 最终 ZIP 附整个程序目录及文档/许可文本，目录内 `SHA256SUMS.txt` 校验每个文件，`dist/SHA256SUMS.txt` 校验主/后台 EXE 和 ZIP。运行 `packaging/release.py` 可从已验证的完整目录生成 ZIP；该脚本拒绝覆盖同名 ZIP。
+
+## 本轮构建与产物（2026-10-27）
+
+构建命令使用 Python 3.12.14，输出目录、ZIP 与中间目录均单独命名：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 packaging/build_release.py --profile full --release-dir D:\program\PYML\main\dist\model-expansion-20261027\PYML-Workbench-full --archive-path D:\program\PYML\main\dist\PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip --work-dir D:\program\PYML\main\build\model-expansion-20261027
+```
+
+可用 `packaging/verify_frozen_sources.py` 比对所有内嵌应用模块；`packaging/smoke_expansion.py` 针对 27 个新增模型和 6 个提升树模型运行真实 EXE；`packaging/verify_zip.py --archive <ZIP绝对路径> --evidence <检查目录>` 支持命名 profile 包的逐文件 SHA-256/CRC 及中文路径解压启动检查。所有 GUI 启动检查使用临时 APPDATA，避免读取用户已有恢复设置。最终实测结果见 `version.md` 和 `output/verification/exe-model-expansion-result.json`。

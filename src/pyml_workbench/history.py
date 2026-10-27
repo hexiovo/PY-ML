@@ -486,6 +486,7 @@ class HistoryStore:
     def mark_fit_started(
         self, *, job_id: str, trial_id: str, max_actual_fits: int,
         elapsed_seconds: float | None = None,
+        fold: int | None = None,
     ) -> int:
         """Commit the fit budget and event before caller enters estimator.fit."""
         now = _now()
@@ -499,7 +500,8 @@ class HistoryStore:
                 raise HistoryError("Cannot start a fit for an unknown job/trial")
             if job["status"] in {"paused", "cancelled", "completed", "failed"}:
                 raise DispatchStopped(f"Job {job_id} is {job['status']}")
-            if trial["status"] != "proposed" or int(trial["actual_fit_count"]) != 0:
+            continuing = fold is not None and trial["status"] == "running" and int(trial["actual_fit_count"]) == fold
+            if not continuing and (trial["status"] != "proposed" or int(trial["actual_fit_count"]) != 0):
                 raise HistoryError(f"Trial {trial_id} has already entered a fit or is not proposed")
             if max_actual_fits <= 0:
                 raise HistoryError("max_actual_fits must be positive")
@@ -524,7 +526,7 @@ class HistoryStore:
                     (elapsed_seconds, now, job_id),
                 )
                 connection.execute(
-                    "UPDATE trials SET status='running', actual_fit_count=1, event_sequence=?, "
+                    "UPDATE trials SET status='running', actual_fit_count=actual_fit_count+1, event_sequence=?, "
                     "started_at=?, finished_at=NULL, duration_seconds=0, updated_at=? "
                     "WHERE job_id=? AND trial_id=?",
                     (sequence, now, now, job_id, trial_id),
@@ -597,7 +599,7 @@ class HistoryStore:
             ).fetchone()
             if job is None or trial is None:
                 raise HistoryError("Cannot recover an unknown job/trial")
-            if trial["status"] != "running" or int(trial["actual_fit_count"]) != 1:
+            if trial["status"] != "running" or int(trial["actual_fit_count"]) < 1:
                 raise HistoryError(f"Trial {trial_id} is not an active fit receipt")
             aggregate = int(job["actual_fit_count"])
             persisted = int(connection.execute(
@@ -613,6 +615,7 @@ class HistoryStore:
             raw.update(
                 status="proposed",
                 fit_index=None,
+                fit_count=0,
                 objective_value=None,
                 metrics={},
                 error=None,
@@ -646,8 +649,8 @@ class HistoryStore:
                 (_json_text(raw, field="interrupted trial recovery"), sequence, now, job_id, trial_id),
             )
             connection.execute(
-                "UPDATE jobs SET actual_fit_count=actual_fit_count-1, updated_at=? WHERE job_id=?",
-                (now, job_id),
+                "UPDATE jobs SET actual_fit_count=actual_fit_count-?, updated_at=? WHERE job_id=?",
+                (int(trial["actual_fit_count"]), now, job_id),
             )
         return sequence
 

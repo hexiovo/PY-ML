@@ -59,7 +59,7 @@ def main():
         '启动时会先显示“正在开启程序中…”；初始化完成后自动进入工作台。\n'
         '操作指南：主界面底部“操作指南”、帮助菜单或 F1；支持离线目录和搜索。\n'
         '文档：docs/overall-guide.md；日志和诊断：文件菜单 → 导出诊断包。\n'
-        + ('标准版包含 71 个 scikit-learn 模型，不含 HMM 或深度学习扩展。'
+        + ('标准版包含 90 个基础模型（84 个 scikit-learn、4 个模型融合和 2 个朴素时序基线），不含可选扩展。'
          if profile_name == 'standard' else
          '完整扩展版中 N01 默认使用 CPU；仅在 CUDA PyTorch 可用时可选择 GPU，其他模型使用 CPU。')
         + '第三方来源及许可证见 docs/third-party.md 与 LICENSES。\n', encoding='utf-8-sig')

@@ -43,6 +43,12 @@ deep = [
   "torch==2.14.1",
   "skorch==1.4.0",
 ]
+manifold = [
+    "umap-learn==0.5.12",
+]
+forecasting = [
+    "statsmodels==0.15.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyml_workbench"]

@@ -17,7 +17,7 @@ from .sequence import (
 )
 
 
-_SEQUENCE_MODEL_IDS = frozenset({"H01", "H02", "H03", "N04", "N06"})
+_SEQUENCE_MODEL_IDS = frozenset({"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"})
 _HMM_MODEL_IDS = frozenset({"H01", "H02", "H03"})
 
 

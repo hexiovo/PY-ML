@@ -19,7 +19,7 @@ import numpy as np
 
 HMM_MODEL_IDS = frozenset({"H01", "H02", "H03"})
 TABULAR_DEEP_MODEL_IDS = frozenset({"N01", "N02"})
-WINDOW_DEEP_MODEL_IDS = frozenset({"N04", "N06"})
+WINDOW_DEEP_MODEL_IDS = frozenset({"N04", "N06", "N07", "N08", "N09"})
 DEEP_MODEL_IDS = TABULAR_DEEP_MODEL_IDS | WINDOW_DEEP_MODEL_IDS
 EXTENDED_MODEL_IDS = HMM_MODEL_IDS | DEEP_MODEL_IDS
 _MAX_RANDOM_STATE = (1 << 32) - 1
@@ -393,7 +393,7 @@ def _torch_module_type() -> tuple[Any, type]:
                 num_layers: int = 1,
             ):
                 super().__init__()
-                if architecture not in {"mlp", "lstm", "gru"}:
+                if architecture not in {"mlp", "lstm", "gru", "cnn", "tcn", "transformer"}:
                     raise ValueError(f"Unknown architecture {architecture!r}")
                 self.architecture = architecture
                 if architecture == "mlp":
@@ -415,7 +415,7 @@ def _torch_module_type() -> tuple[Any, type]:
                         num_layers=num_layers,
                         batch_first=True,
                     )
-                else:
+                elif architecture == "gru":
                     self.backbone = None
                     self.recurrent = torch.nn.GRU(
                         input_size=input_size,
@@ -423,14 +423,44 @@ def _torch_module_type() -> tuple[Any, type]:
                         num_layers=num_layers,
                         batch_first=True,
                     )
+                elif architecture == "cnn":
+                    layers = []
+                    for index in range(num_layers):
+                        layers.extend([torch.nn.Conv1d(input_size if index == 0 else hidden_size, hidden_size, kernel_size=3, padding=1), torch.nn.ReLU()])
+                    self.convolutions = torch.nn.Sequential(*layers)
+                elif architecture == "tcn":
+                    self.temporal = torch.nn.ModuleList([
+                        torch.nn.Conv1d(input_size if index == 0 else hidden_size, hidden_size, kernel_size=3, dilation=2 ** index, padding=2 * (2 ** index))
+                        for index in range(num_layers)
+                    ])
+                else:
+                    self.projection = torch.nn.Linear(input_size, hidden_size)
+                    layer = torch.nn.TransformerEncoderLayer(d_model=hidden_size, nhead=4 if hidden_size % 4 == 0 else 1, dim_feedforward=hidden_size * 2, dropout=0., batch_first=True)
+                    self.encoder = torch.nn.TransformerEncoder(layer, num_layers=num_layers, enable_nested_tensor=False)
                 self.head = torch.nn.Sequential(torch.nn.ReLU(), torch.nn.Linear(hidden_size, output_size))
 
             def forward(self, values):
                 if self.architecture == "mlp":
                     features = self.backbone(values)
-                else:
+                elif self.architecture in {"lstm", "gru"}:
                     outputs, _ = self.recurrent(values)
                     features = outputs[:, -1, :]
+                elif self.architecture == "cnn":
+                    features = self.convolutions(values.transpose(1, 2)).mean(dim=2)
+                elif self.architecture == "tcn":
+                    outputs = values.transpose(1, 2)
+                    for convolution in self.temporal:
+                        length = outputs.shape[-1]
+                        outputs = torch.relu(convolution(outputs)[..., :length])
+                    features = outputs[:, :, -1]
+                else:
+                    outputs = self.projection(values)
+                    positions = torch.arange(values.shape[1], device=values.device, dtype=values.dtype).unsqueeze(1)
+                    frequencies = torch.exp(torch.arange(0, outputs.shape[-1], 2, device=values.device, dtype=values.dtype) * (-math.log(10000.0) / outputs.shape[-1]))
+                    encoding = torch.zeros_like(outputs[0])
+                    encoding[:, 0::2] = torch.sin(positions * frequencies)
+                    encoding[:, 1::2] = torch.cos(positions * frequencies[:encoding[:, 1::2].shape[1]])
+                    features = self.encoder(outputs + encoding.unsqueeze(0))[:, -1, :]
                 return self.head(features)
 
         GenericTorchModule.__module__ = __name__
@@ -490,7 +520,7 @@ def _deep_estimator(
         cls = classifier if model_id == "N01" else regressor
     except ImportError as exc:
         raise OptionalModelDependencyError("Neural models require the 'deep' extra (torch and skorch)") from exc
-    architecture = {"N01": "mlp", "N02": "mlp", "N04": "lstm", "N06": "gru"}[model_id]
+    architecture = {"N01": "mlp", "N02": "mlp", "N04": "lstm", "N06": "gru", "N07": "cnn", "N08": "tcn", "N09": "transformer"}[model_id]
     return cls(
         module=module_type,
         module__architecture=architecture,
@@ -699,7 +729,7 @@ def build_deep_from_state(
     with deep_cpu_context(device=selected_device):
         _, module_type = _torch_module_type()
         module = module_type(
-            architecture={"N01": "mlp", "N02": "mlp", "N04": "lstm", "N06": "gru"}[model_id],
+            architecture={"N01": "mlp", "N02": "mlp", "N04": "lstm", "N06": "gru", "N07": "cnn", "N08": "tcn", "N09": "transformer"}[model_id],
             input_size=int(input_size),
             output_size=int(output_size),
             hidden_size=params["hidden_size"],

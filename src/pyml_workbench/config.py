@@ -24,6 +24,7 @@ class DatasetConfig:
     sheet_name: str | None = None
     target_column: str | None = None
     feature_columns: tuple[str, ...] | None = None
+    reference_labels_column: str | None = None
 
     def validate(self, *, supervised: bool) -> None:
         if not self.source_path.strip():
@@ -39,6 +40,8 @@ class DatasetConfig:
             raise ConfigError("feature_columns must be unique")
         if self.target_column and self.feature_columns and self.target_column in self.feature_columns:
             raise ConfigError("target_column cannot also appear in feature_columns")
+        if self.reference_labels_column and self.reference_labels_column in (self.feature_columns or ()):
+            raise ConfigError("Reference labels must be excluded from model features")
 
 
 @dataclass(frozen=True)
@@ -47,8 +50,19 @@ class SplitConfig:
     train_fraction: float = 0.6
     validation_fraction: float = 0.2
     test_fraction: float = 0.2
+    strategy: str = "random"
+    group_column: str | None = None
+    time_column: str | None = None
 
     def validate(self) -> None:
+        if self.strategy not in {"random", "group", "time"}:
+            raise ConfigError("split.strategy must be random, group, or time")
+        if self.strategy == "group" and not self.group_column:
+            raise ConfigError("Group splitting requires group_column")
+        if self.group_column and self.strategy != "group":
+            raise ConfigError("group_column requires strategy='group'")
+        if self.time_column and self.strategy != "time":
+            raise ConfigError("time_column requires strategy='time'")
         if self.seed < 0:
             raise ConfigError("seed must be a non-negative integer")
         ratios = (self.train_fraction, self.validation_fraction, self.test_fraction)
@@ -62,6 +76,21 @@ class SplitConfig:
 
 
 @dataclass(frozen=True)
+class EvaluationConfig:
+    folds: int = 5
+    strategy: str = "auto"
+    gap: int = 0
+
+    def validate(self):
+        if isinstance(self.folds, bool) or not isinstance(self.folds, int) or not 2 <= self.folds <= 10:
+            raise ConfigError("Cross-validation folds must be an integer between 2 and 10")
+        if self.strategy not in {"auto", "stratified", "kfold", "group", "time"}:
+            raise ConfigError("Unknown cross-validation strategy")
+        if isinstance(self.gap, bool) or not isinstance(self.gap, int) or self.gap < 0:
+            raise ConfigError("Cross-validation gap must be a nonnegative integer")
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     dataset: DatasetConfig
     task: str
@@ -70,6 +99,7 @@ class ExperimentConfig:
     split: SplitConfig = field(default_factory=SplitConfig)
     output_dir: str | None = None
     sequence: SequenceConfig | None = None
+    evaluation: EvaluationConfig | None = None
 
     def validate(self) -> None:
         if self.task not in _SUPPORTED_TASKS:
@@ -78,10 +108,27 @@ class ExperimentConfig:
             raise ConfigError("model_id cannot be empty")
         self.dataset.validate(supervised=self.task in {"classification", "regression"})
         self.split.validate()
+        if self.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"} and self.split.strategy != "random":
+            raise ConfigError("SequencePlan models configure group/time ordering through sequence, not split.strategy")
         if not isinstance(self.parameters, dict):
             raise ConfigError("parameters must be a JSON object")
+        structural = {name for name in (self.split.group_column, self.split.time_column) if name}
+        if structural.intersection(self.dataset.feature_columns or ()) or self.dataset.target_column in structural:
+            raise ConfigError("Split group/time columns must be excluded from features and target")
+        if self.evaluation is not None:
+            self.evaluation.validate()
+            if self.task not in {"classification", "regression"} or self.model_id.startswith(("H", "N")):
+                raise ConfigError("Fold evaluation supports ordinary tabular classifiers/regressors and T01–T05; sequence neural models use their SequencePlan validation")
+            if self.evaluation.strategy == "group" and self.split.strategy != "group":
+                raise ConfigError("Group cross-validation requires a group holdout split")
+            if self.evaluation.strategy == "time" and self.split.strategy != "time":
+                raise ConfigError("Rolling cross-validation requires a chronological holdout split")
+            if self.split.strategy in {"time", "group"} and self.evaluation.strategy not in {"auto", self.split.strategy}:
+                raise ConfigError("Cross-validation must preserve the configured group/time isolation")
+        if self.model_id.startswith("T") and self.split.strategy != "time":
+            raise ConfigError("Forecasting models require split.strategy='time'")
         if self.sequence is not None:
-            if self.model_id not in {"H01", "H02", "H03", "N04", "N06"}:
+            if self.model_id not in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
                 raise ConfigError("sequence settings apply only to HMM and window-regression models")
             try:
                 SequenceConfig.from_dict(self.sequence).validate(
@@ -96,6 +143,13 @@ class ExperimentConfig:
     def to_dict(self) -> dict[str, Any]:
         self.validate()
         payload = asdict(self)
+        if self.dataset.reference_labels_column is None:
+            payload["dataset"].pop("reference_labels_column", None)
+        if self.evaluation is None:
+            payload.pop("evaluation", None)
+        if self.split.strategy == "random" and self.split.group_column is None and self.split.time_column is None:
+            for key in ("strategy", "group_column", "time_column"):
+                payload["split"].pop(key)
         if self.sequence is None:
             # Keep the canonical form of existing configurations byte-for-byte
             # stable; old sessions and search receipts must retain their hashes.
@@ -124,6 +178,7 @@ class ExperimentConfig:
                 split=SplitConfig(**split_payload),
                 output_dir=payload.get("output_dir"),
                 sequence=(SequenceConfig.from_dict(payload["sequence"]) if payload.get("sequence") is not None else None),
+                evaluation=(EvaluationConfig(**payload["evaluation"]) if payload.get("evaluation") is not None else None),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ConfigError(f"Invalid experiment configuration: {exc}") from exc

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,7 +35,7 @@ from .data import DatasetError, LoadedDataset, load_dataset, select_features_tar
 from .preprocessing import build_preprocessor
 from .sequence import SequenceConfig, build_sequence_plan
 
-_EXTENDED_MODEL_IDS = {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}
+_EXTENDED_MODEL_IDS = {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}
 
 
 class ExperimentError(RuntimeError):
@@ -82,6 +83,7 @@ class ExperimentSession:
     fit_scope: str = "train"
     plot_scores: dict[str, dict[str, Any]] = field(default_factory=dict)
     plot_explanations: dict[str, Any] = field(default_factory=dict)
+    reference_labels: pd.Series | None = None
 
 
 def _json_digest(value: Any) -> str:
@@ -107,8 +109,11 @@ class DatasetSnapshot:
     splits: dict[str, np.ndarray]
     source_path: str
     manifest: dict[str, Any]
+    structure: pd.DataFrame | None = None
 
     def verify(self, config: ExperimentConfig | None = None) -> None:
+        if self.manifest.get("structure_sha256") != _table_digest(getattr(self, "structure", None)):
+            raise ExperimentError("Snapshot group/time structure was modified")
         observed = {"features": _table_digest(self.features), "target": _table_digest(self.target), "objective_labels": _table_digest(self.objective_labels)}
         if _json_digest(observed) != self.manifest["data_sha256"]:
             raise ExperimentError("Dataset snapshot was modified")
@@ -127,6 +132,7 @@ class DatasetSnapshot:
 def build_snapshot(config: ExperimentConfig | dict[str, Any], *, objective_labels_column: str | None = None) -> DatasetSnapshot:
     config = ExperimentConfig.from_dict(config) if isinstance(config, dict) else config
     config.validate()
+    objective_labels_column = objective_labels_column or config.dataset.reference_labels_column
     before_sha = hashlib.sha256(Path(config.dataset.source_path).read_bytes()).hexdigest()
     dataset = load_dataset(config.dataset)
     source_sha = hashlib.sha256(Path(dataset.source_path).read_bytes()).hexdigest()
@@ -163,9 +169,16 @@ def _build_snapshot_from_frame(
     if not isinstance(source_sha256, str) or len(source_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in source_sha256):
         raise ValueError("source_sha256 must be a lowercase 64-character SHA-256 digest")
     source_path = str(Path(source_path).expanduser().resolve())
+    objective_labels_column = objective_labels_column or config.dataset.reference_labels_column
+    structural = {name for name in (config.split.group_column, config.split.time_column) if name}
+    if not structural.issubset(frame.columns):
+        raise DatasetError("Configured split group/time column does not exist")
+    structure = frame.loc[:, sorted(structural)].copy(deep=True) if structural else None
 
     selected = config.dataset.feature_columns
-    if selected is None and config.model_id in {"H01", "H02", "H03", "N04", "N06"}:
+    if selected is None and structural:
+        selected = tuple(name for name in frame.columns if name not in structural and name not in {config.dataset.target_column, objective_labels_column})
+    if selected is None and config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
         sequence = SequenceConfig.from_dict(config.sequence) if config.sequence is not None else SequenceConfig()
         structural = {value for value in (config.dataset.target_column, sequence.group_column, sequence.time_column) if value is not None}
         columns = sequence.observation_columns if config.model_id in {"H01", "H02", "H03"} and sequence.observation_columns else frame.columns
@@ -178,12 +191,26 @@ def _build_snapshot_from_frame(
         if selected is None:
             selected = tuple(name for name in frame.columns if name not in {config.dataset.target_column, objective_labels_column})
     loaded = LoadedDataset(source_path, config.dataset.sheet_name, (), frame)
-    features, target = select_features_target(loaded, task=config.task, target_column=config.dataset.target_column, feature_columns=selected)
+    if config.model_id.startswith("T"):
+        # Univariate forecasters do not consume exogenous features. A synthetic
+        # row-count input lets target-only files use the normal artifact contract.
+        if config.dataset.target_column not in frame or frame[config.dataset.target_column].isna().any():
+            raise DatasetError("Forecasting requires a complete target column")
+        features = pd.DataFrame({"_forecast_position": np.arange(len(frame), dtype=float)}, index=frame.index)
+        target = frame[config.dataset.target_column].copy(deep=True)
+    else:
+        features, target = select_features_target(loaded, task=config.task, target_column=config.dataset.target_column, feature_columns=selected)
     labels = frame[objective_labels_column].copy(deep=True) if objective_labels_column else None
     if labels is not None and labels.isna().any():
         raise ConfigError("Objective labels contain missing values")
     if splits is None:
-        normalized_splits = _split_rows(target, len(features), config.split.seed, stratified=config.task == "classification")
+        if config.split.strategy != "random":
+            from .validation import structural_split
+            normalized_splits = structural_split(frame, config.split)
+            if config.task == "classification" and any(set(target.iloc[part].unique()) != set(target.unique()) for part in normalized_splits.values()):
+                raise SplitError("Group/time partitions must each contain every classification label")
+        else:
+            normalized_splits = _split_rows(target, len(features), config.split.seed, stratified=config.task == "classification")
     else:
         if not isinstance(splits, dict) or set(splits) != {"train", "validation", "test"}:
             raise ExperimentError("Snapshot splits must contain train, validation, and test positions")
@@ -209,7 +236,9 @@ def _build_snapshot_from_frame(
         "task": config.task, "dataset_config": payload["dataset"], "split_config": payload["split"],
         "objective_labels_column": objective_labels_column,
     }
-    return DatasetSnapshot(features.copy(deep=True), target.copy(deep=True) if target is not None else None, labels, normalized_splits, source_path, manifest)
+    if structure is not None:
+        manifest["structure_sha256"] = _table_digest(structure)
+    return DatasetSnapshot(features.copy(deep=True), target.copy(deep=True) if target is not None else None, labels, normalized_splits, source_path, manifest, structure)
 
 
 def build_extended_snapshot(
@@ -225,7 +254,7 @@ def build_extended_snapshot(
     source_sha = hashlib.sha256(Path(dataset.source_path).read_bytes()).hexdigest()
     if source_sha != before_sha:
         raise DatasetError("Source changed while loading; retry with a stable dataset")
-    sequence_ids = {"H01", "H02", "H03", "N04", "N06"}
+    sequence_ids = {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
     if config.model_id not in sequence_ids:
         return (
             _build_snapshot_from_frame(
@@ -309,6 +338,9 @@ class FittedModel:
         return self._frozen_config_sha256
 
     def _feature_frame(self, values: Any) -> pd.DataFrame:
+        if self.model_id.startswith("T"):
+            count = len(values) if not isinstance(values, dict) else 1
+            return pd.DataFrame({"_forecast_position": np.arange(count, dtype=float)})
         if isinstance(values, pd.DataFrame):
             frame = values.copy(deep=False)
         elif isinstance(values, dict):
@@ -464,24 +496,10 @@ def _target_for_task(target: pd.Series | None, task: str, estimator: Any) -> pd.
     return numeric
 
 
-def _classification_metrics(actual, predicted) -> dict[str, Any]:
-    return {
-        "sample_count": int(len(actual)),
-        "accuracy": float(accuracy_score(actual, predicted)),
-        "balanced_accuracy": float(balanced_accuracy_score(actual, predicted)),
-        "precision_macro": float(precision_score(actual, predicted, average="macro", zero_division=0)),
-        "recall_macro": float(recall_score(actual, predicted, average="macro", zero_division=0)),
-        "f1_macro": float(f1_score(actual, predicted, average="macro", zero_division=0)),
-    }
-
-
-def _regression_metrics(actual, predicted) -> dict[str, Any]:
-    return {
-        "sample_count": int(len(actual)),
-        "r2": float(r2_score(actual, predicted)),
-        "mae": float(mean_absolute_error(actual, predicted)),
-        "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
-    }
+# Retain these public-in-practice helper names for existing callers and bundles.
+from .metrics import classification_metrics as _classification_metrics
+from .metrics import regression_metrics as _regression_metrics
+from .metrics import prediction_quantile
 
 
 def _cluster_metrics(values, labels) -> dict[str, Any]:
@@ -803,6 +821,7 @@ def prepare_experiment(
     sequence_plan: Any | None = None,
     selected_epochs: int | None = None,
     refit_provenance: dict[str, Any] | None = None,
+    _before_cv_fit: Callable[[int], None] | None = None,
 ) -> ExperimentSession:
     """Fit once and return a frozen validation session before touching the test partition."""
     if isinstance(config, dict):
@@ -810,7 +829,7 @@ def prepare_experiment(
     if not isinstance(config, ExperimentConfig):
         raise TypeError("config must be an ExperimentConfig or its JSON-compatible dictionary")
     config.validate()
-    extended_model_ids = {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}
+    extended_model_ids = {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}
     if config.model_id in extended_model_ids:
         from .extended_experiment import ExtendedExperimentSession, prepare_extended_experiment
 
@@ -820,7 +839,7 @@ def prepare_experiment(
             snapshot, sequence_plan = build_extended_snapshot(config)
         else:
             snapshot.verify(config)
-        sequence_model_ids = {"H01", "H02", "H03", "N04", "N06"}
+        sequence_model_ids = {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
         if config.model_id in sequence_model_ids:
             if sequence_plan is None:
                 raise ExperimentError("Sequence models require their owned SequencePlan with a supplied snapshot")
@@ -888,6 +907,8 @@ def prepare_experiment(
         )
         session.metrics["selection"] = selection
         return session
+    if snapshot is None and (config.split.strategy != "random" or config.evaluation is not None or config.dataset.reference_labels_column):
+        snapshot = build_snapshot(config)
     # Capture the exact user selection before constructing or fitting an estimator.
     # Rebuild the internal config from this deep JSON snapshot so nested parameter
     # dictionaries shared with a caller cannot change the label attached to the fit.
@@ -998,7 +1019,7 @@ def prepare_experiment(
     rows: list[dict[str, Any]] = []
     metrics: dict[str, Any] = {}
     test_evaluation_count = 0
-    if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
+    if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}:
         from .extended_experiment import ExtendedTestComputation, evaluate_extended_test
 
         if session.test_evaluation_count or "test" in metrics:
@@ -1012,12 +1033,27 @@ def prepare_experiment(
         rows.extend(dict(row) for row in computation.rows)
         session.test_evaluation_count = 1
         record_event("test_metrics_computed_once")
+    elif config.model_id.startswith("T"):
+        train_prediction = estimator.predict_in_sample()
+        valid = np.isfinite(train_prediction)
+        if not valid.any():
+            raise ExperimentError("Forecaster has no finite in-sample predictions")
+        train_series = np.asarray(y_train, dtype=float)
+        training_parts = [train_series]
+        metrics["train"] = _regression_metrics(train_series[valid], train_prediction[valid], training_series=training_parts, seasonal_period=estimator.mase_period_)
+        rows.extend(_result_rows("train", train_idx[valid], features.index[train_idx[valid]], train_series[valid], train_prediction[valid]))
+        if len(validation_idx):
+            validation_prediction = estimator.forecast(len(validation_idx))
+            metrics["validation"] = _regression_metrics(y_validation.to_numpy(), validation_prediction, training_series=training_parts, seasonal_period=estimator.mase_period_, horizons=np.arange(1, len(validation_idx) + 1))
+            rows.extend(_result_rows("validation", validation_idx, features.index[validation_idx], y_validation.to_numpy(), validation_prediction))
+        record_event("train_metrics_computed")
+        record_event("validation_metrics_computed")
     elif config.task in {"classification", "regression"}:
         if not capabilities.get("predict"):
             raise ExperimentError(f"Supervised model {config.model_id} does not expose predict after fit")
-        train_prediction = estimator.predict(x_train_ready)
-        validation_prediction = estimator.predict(x_validation_ready) if len(validation_idx) else None
-        metric_fn = _classification_metrics if config.task == "classification" else _regression_metrics
+        train_prediction = np.asarray(estimator.predict(x_train_ready)).reshape(-1)
+        validation_prediction = np.asarray(estimator.predict(x_validation_ready)).reshape(-1) if len(validation_idx) else None
+        metric_fn = _classification_metrics if config.task == "classification" else partial(_regression_metrics, quantile=prediction_quantile(estimator), training_series=[target.iloc[splits["train"]].to_numpy(dtype=float)] if config.split.strategy == "time" else None)
         metrics["train"] = metric_fn(y_train.to_numpy(), train_prediction)
         if len(validation_idx):
             metrics["validation"] = metric_fn(y_validation.to_numpy(), validation_prediction)
@@ -1105,6 +1141,9 @@ def prepare_experiment(
             plot_scores["validation"] = _classification_score_cache(
                 estimator, x_validation_ready, validation_idx
             )
+        metrics[score_partition] = _classification_metrics(y_train.to_numpy(), train_prediction, plot_scores[score_partition])
+        if len(validation_idx):
+            metrics["validation"] = _classification_metrics(y_validation.to_numpy(), validation_prediction, plot_scores["validation"])
     if config.task in {"classification", "regression"}:
         plot_explanations = _classification_explanation_cache(
             estimator,
@@ -1113,7 +1152,7 @@ def prepare_experiment(
             output_label=getattr(config.dataset, "target_column", None),
         )
 
-    return ExperimentSession(
+    session = ExperimentSession(
         config=config,
         frozen_config=frozen_config,
         frozen_config_sha256=frozen_sha,
@@ -1130,7 +1169,41 @@ def prepare_experiment(
         fit_scope=_fit_scope,
         plot_scores=plot_scores,
         plot_explanations=plot_explanations,
+        reference_labels=snapshot.objective_labels.copy(deep=True) if snapshot is not None and snapshot.objective_labels is not None else None,
     )
+    if session.reference_labels is not None and config.task in {"clustering", "anomaly detection"}:
+        for partition in ("refit",) if _fit_scope == "train_validation" else ("train", "validation"):
+            _attach_reference_metrics(session, partition)
+    if config.evaluation is not None and _fit_scope == "train":
+        from .validation import cross_validate_snapshot
+        session.metrics["cross_validation"] = cross_validate_snapshot(config, snapshot, before_fit=_before_cv_fit)
+        record_event("cross_validation_completed")
+    return session
+
+
+def _attach_reference_metrics(session, partition):
+    from .metrics import anomaly_metrics, cluster_label_metrics
+    labels = getattr(session, "reference_labels", None)
+    if labels is None:
+        return
+    output_rows = [row for row in session.rows if row["split"] == partition and "y_pred" in row]
+    if not output_rows:
+        return
+    positions = np.asarray([row["row_position"] for row in output_rows], dtype=int)
+    expected = labels.iloc[positions].to_numpy()
+    predicted = [row["y_pred"] for row in output_rows]
+    if session.config.task == "clustering":
+        extra = cluster_label_metrics(expected, predicted)
+    else:
+        if not set(np.unique(expected)).issubset({-1, 1}):
+            session.metrics[partition]["reference_label_note"] = "异常标签需要 -1/+1；搜索可在 objective.label_mapping 中提供映射。"
+            return
+        estimator = session.fitted_model.estimator
+        scores = None
+        if callable(getattr(estimator, "score_samples", None)):
+            scores = estimator.score_samples(session.fitted_model.preprocessor.transform(session.features.iloc[positions]))
+        extra = anomaly_metrics(expected, predicted, scores)
+    session.metrics[partition].update(extra)
 
 
 def freeze_experiment(session: ExperimentSession, expected_config: ExperimentConfig | dict[str, Any] | None = None) -> ExperimentSession:
@@ -1228,14 +1301,23 @@ def _evaluate_test_once(
         x_test = features.iloc[test_idx].copy(deep=True)
         y_test = target.iloc[test_idx].copy(deep=True)
         x_test_ready = preprocessor.transform(x_test)
-        test_prediction = estimator.predict(x_test_ready)
-        metric_fn = _classification_metrics if config.task == "classification" else _regression_metrics
+        if config.model_id.startswith("T"):
+            offset = 0 if session.fit_scope == "train_validation" else len(splits["validation"])
+            test_prediction = estimator.forecast(len(test_idx), offset=offset)
+        else:
+            test_prediction = np.asarray(estimator.predict(x_test_ready)).reshape(-1)
+        metric_fn = _classification_metrics if config.task == "classification" else partial(_regression_metrics, quantile=prediction_quantile(estimator), training_series=[target.iloc[splits["train"]].to_numpy(dtype=float)] if config.split.strategy == "time" else None)
         metrics["test"] = metric_fn(y_test.to_numpy(), test_prediction)
+        if config.model_id.startswith("T"):
+            metrics["test"] = _regression_metrics(y_test.to_numpy(), test_prediction,
+                training_series=[estimator.history_], seasonal_period=estimator.mase_period_,
+                horizons=np.arange(offset + 1, offset + len(test_idx) + 1))
         rows.extend(_result_rows("test", test_idx, features.index[test_idx], y_test.to_numpy(), test_prediction))
         if config.task == "classification":
             session.plot_scores["test"] = _classification_score_cache(
                 estimator, x_test_ready, test_idx
             )
+            metrics["test"] = _classification_metrics(y_test.to_numpy(), test_prediction, session.plot_scores["test"])
         session.test_evaluation_count = 1
         record_event("test_metrics_computed_once")
     elif config.task == "clustering":
@@ -1288,6 +1370,8 @@ def _evaluate_test_once(
             }
             record_event("test_not_evaluated_capability_guard")
 
+    if config.task in {"clustering", "anomaly detection"}:
+        _attach_reference_metrics(session, "test")
     result_frame = pd.DataFrame(rows)
     audit = {
         "events": events,

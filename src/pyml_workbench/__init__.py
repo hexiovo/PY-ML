@@ -7,7 +7,7 @@ from .catalog import (
     list_models,
     model_capabilities,
 )
-from .config import ConfigError, DatasetConfig, ExperimentConfig, SplitConfig
+from .config import ConfigError, DatasetConfig, ExperimentConfig, SplitConfig, EvaluationConfig
 from .batch import (
     BatchError,
     create_search_job,
@@ -66,6 +66,7 @@ __all__ = [
     "FittedModel",
     "EstimatorAdapter",
     "ExperimentConfig",
+    "EvaluationConfig",
     "LoadedDataset",
     "HistoryError",
     "HistoryStore",

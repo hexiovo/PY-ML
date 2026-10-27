@@ -129,7 +129,7 @@ def _validated_request(
     else:
         current = snapshot
     _validate_request_snapshot(config, spec, current)
-    if config.model_id in {"H01", "H02", "H03", "N04", "N06"}:
+    if config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
         if sequence_plan is None:
             raise BatchError("Sequence search requires its owned SequencePlan")
         sequence_plan.verify(config, current)
@@ -149,12 +149,16 @@ def _validated_search_definition(
     if get_model(config.model_id)["task"] != config.task:
         raise BatchError("Selected model is incompatible with the configured task")
     spec = SearchSpec.from_dict(spec)
+    if config.evaluation is not None and spec.max_fits < config.evaluation.folds + 1:
+        raise BatchError("Fit budget must cover the main model plus every cross-validation fold")
     if spec.max_fits > MAX_ACTUAL_FITS:
         raise BatchError(f"A search may use at most {MAX_ACTUAL_FITS} actual fits")
     if spec.max_proposals > MAX_PROPOSALS:
         raise BatchError(f"A search may use at most {MAX_PROPOSALS} proposals")
     if spec.timeout_seconds > MAX_ACTIVE_SECONDS:
         raise BatchError(f"A search may use at most {MAX_ACTIVE_SECONDS // 60} active minutes")
+    if spec.objective.objective_labels_column is None:
+        spec.objective.objective_labels_column = config.dataset.reference_labels_column
     spec.objective = spec.objective.resolve(config.task)
     spec.space.validate_for(config)
     if spec.method == "grid":
@@ -384,7 +388,7 @@ def _rebuild_resume(store: HistoryStore, job: dict[str, Any]) -> SearchResume | 
             "Cannot resume search job because its aggregate fit counter does not "
             f"match persisted trial receipts ({actual_fit_count} != {persisted_fit_count})."
         )
-    if running_rows and int(running_rows[0]["actual_fit_count"]) != 1:
+    if running_rows and int(running_rows[0]["actual_fit_count"]) < 1:
         raise BatchError(
             "Cannot resume a running trial without exactly one persisted fit receipt."
         )
@@ -402,7 +406,7 @@ def _rebuild_resume(store: HistoryStore, job: dict[str, Any]) -> SearchResume | 
             )
         except HistoryError as exc:
             raise BatchError(f"Cannot safely requeue interrupted trial: {exc}") from exc
-        actual_fit_count -= 1
+        actual_fit_count -= int(running_rows[0]["actual_fit_count"])
         trial_rows = store.list_trials(job["job_id"])
         persisted_fit_count = sum(int(row["actual_fit_count"]) for row in trial_rows)
         if persisted_fit_count != actual_fit_count:
@@ -577,6 +581,25 @@ def _run_search_job_impl(
             if name == "search_started":
                 store.set_search_fingerprint(job_id, data.get("fingerprint", ""))
                 store.touch_elapsed(job_id, elapsed)
+                resumed_records = resume.records if resume is not None else []
+                completed_fit_records = [
+                    item for item in resumed_records
+                    if item.fit_index is not None
+                    and item.status in {"complete", "failed", "unscorable"}
+                ]
+                successful_durations = [
+                    float(item.duration_seconds)
+                    for item in resumed_records
+                    if item.status == "complete"
+                    and isinstance(item.duration_seconds, (int, float))
+                    and math.isfinite(float(item.duration_seconds))
+                    and item.duration_seconds >= 0
+                ]
+                data["resume_timing"] = {
+                    "completed_fit_count": sum(item.fit_count or 1 for item in completed_fit_records),
+                    "fit_duration_count": sum(item.fit_count or 1 for item in resumed_records if item.status == "complete" and isinstance(item.duration_seconds, (int, float)) and math.isfinite(float(item.duration_seconds)) and item.duration_seconds >= 0),
+                    "fit_duration_total": sum(successful_durations),
+                }
             elif name == "proposal" and record:
                 store.record_proposal(
                     job_id=job_id,
@@ -595,6 +618,7 @@ def _run_search_job_impl(
                     trial_id=record["trial_id"],
                     max_actual_fits=spec.max_fits,
                     elapsed_seconds=elapsed,
+                    fold=data.get("fold"),
                 )
             elif name == "cache_hit" and record:
                 source_trial_id = record.get("cached_from")
@@ -656,6 +680,20 @@ def _run_search_job_impl(
             current = store.get_job(job_id)
             if current and current["status"] == "pausing":
                 store.set_job_status(job_id, "paused", reason="safe point reached")
+            current = store.get_job(job_id) or job
+            event_callback({
+                "type": "progress",
+                "action": "search",
+                "operation": "search",
+                "job_id": job_id,
+                "trial_id": None,
+                "name": "search_paused",
+                "data": {
+                    "actual_fit_count": int(current.get("actual_fit_count", 0)),
+                    "proposal_count": int(current.get("proposal_count", 0)),
+                    "elapsed_seconds": clock.elapsed(),
+                },
+            })
             while True:
                 request = store.control_request(job_id)
                 if request == "cancel":
@@ -663,6 +701,20 @@ def _run_search_job_impl(
                 if request is None:
                     clock.resume()
                     store.set_job_status(job_id, "running", reason="resumed at safe point")
+                    current = store.get_job(job_id) or job
+                    event_callback({
+                        "type": "progress",
+                        "action": "search",
+                        "operation": "search",
+                        "job_id": job_id,
+                        "trial_id": None,
+                        "name": "search_resumed",
+                        "data": {
+                            "actual_fit_count": int(current.get("actual_fit_count", 0)),
+                            "proposal_count": int(current.get("proposal_count", 0)),
+                            "elapsed_seconds": clock.elapsed(),
+                        },
+                    })
                     return True
                 time.sleep(0.4)
 
@@ -987,7 +1039,7 @@ def _load_owned_job_sequence_plan(
     snapshot: DatasetSnapshot,
 ) -> SequencePlan | None:
     receipt_json = job.get("sequence_plan_receipt_json")
-    is_sequence_model = config.model_id in {"H01", "H02", "H03", "N04", "N06"}
+    is_sequence_model = config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
     if not receipt_json:
         if is_sequence_model or snapshot.manifest.get("sequence_plan_sha256") is not None:
             raise BatchError("Queued sequence search is missing its owned plan receipt")

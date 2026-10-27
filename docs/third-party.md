@@ -30,3 +30,9 @@
 传统模型目录中的每个条目记录 scikit-learn estimator 的完整导入名和官方 API 链接；HMM 与深度模型记录各自上游库和安装 extra，见[模型与参数索引](model-index.md)。参数默认值由实际 estimator `get_params(deep=True)` 或扩展模型 `parameter_schema()` 暴露；模型 smoke 结果证明的是对应模拟任务下的执行，不代表模型准确率、科学有效性或任意参数组合都适用。当前深度实现显式使用 CPU，尚未验证 GPU 运行路径。
 
 许可证信息用于说明当前直接依赖来源，不构成法律意见。具体重分发义务以随对应锁定发行包提供的完整许可证、版权声明和 NOTICE 为准；依赖升级后应重新核对其元数据和许可证文件。
+
+## 2026-10-27 新增可选组件
+
+- `umap-learn==0.5.12`（BSD-3-Clause）：manifold extra，含锁定的 pynndescent、numba、llvmlite 等依赖。
+- `statsmodels==0.15.0`（BSD-3-Clause）：forecasting extra，指数平滑、ARIMA/SARIMA；传递依赖以 uv.lock 为准。
+- 新增融合、统计回归、GMM、HDBSCAN 使用已有 scikit-learn；CNN、TCN、Transformer、Autoencoder 使用已有 PyTorch/skorch。上述库保持其原许可证，不改变本项目许可。

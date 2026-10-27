@@ -43,6 +43,9 @@ def main():
     with tempfile.TemporaryDirectory(prefix='PYML-界面检查-') as temp:
         root = Path(temp)
         env['PYML_LOG_ROOT'] = str(root / 'logs')
+        env['APPDATA'] = str(root / 'appdata')
+        env['LOCALAPPDATA'] = str(root / 'local-appdata')
+        env['PYML_OPERATION_LOG_PATH'] = str(root / 'operations.jsonl')
         started = time.monotonic()
         process = subprocess.Popen([str(executable)], cwd=root, env=env)
         @callback_type
@@ -132,9 +135,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix='PYML-Qt-worker-') as temp:
         root = Path(temp)
         os.environ['PYML_LOG_ROOT'] = str(root / 'logs')
+        os.environ['APPDATA'] = str(root / 'appdata')
+        os.environ['LOCALAPPDATA'] = str(root / 'local-appdata')
+        os.environ['PYML_OPERATION_LOG_PATH'] = str(root / 'operations.jsonl')
         source = root / 'data.csv'
         source.write_text('x,target\n' + ''.join(f'{i},{i%2}\n' for i in range(80)), encoding='utf-8')
-        window = WorkbenchWindow(preferences_path=root / 'preferences.json')
+        window = WorkbenchWindow(preferences_path=root / 'preferences.json', checkpoint_directory=root / 'checkpoints')
         dialog = BatchSearchDialog(window)
         def wait(process, owner):
             deadline = time.monotonic() + 120

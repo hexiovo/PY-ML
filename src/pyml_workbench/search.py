@@ -137,6 +137,7 @@ class TrialRecord:
     training_curves: dict[str, Any] | None = None
     error_id: str | None = None
     traceback: str | None = None
+    fit_count: int = 0
 
     def to_dict(self):
         return json_copy(asdict(self))
@@ -360,7 +361,8 @@ class _SearchEngine:
         if self.should_cancel and self.should_cancel():
             self.stop_reason = "cancelled"
             raise _StopSearch
-        if check_fit_budget and self.actual_fit_count >= self.spec.max_fits:
+        required = 1 + (self.config.evaluation.folds if self.config.evaluation is not None else 0)
+        if check_fit_budget and self.actual_fit_count + required > self.spec.max_fits:
             self.stop_reason = "fit_limit"
         elif check_proposal_budget and self.proposal_count >= self.spec.max_proposals:
             self.stop_reason = "proposal_limit"
@@ -395,15 +397,25 @@ class _SearchEngine:
 
     def _fit_record(self, record: TrialRecord, *, before: float) -> float:
         self.actual_fit_count += 1
+        record.fit_count += 1
         record.fit_index, record.status = self.actual_fit_count, "running"
         # Callback errors propagate. The persistence owner must commit this
         # receipt before returning; no fit begins if recording the budget fails.
         self.emit("fit_started", record)
         session = None
         trial_config = replace(self.config, parameters=record.parameters, output_dir=None)
+        def before_cv_fit(index):
+            # Check time/control without asking for a second whole-candidate budget.
+            self.gate(check_fit_budget=False, check_proposal_budget=False)
+            if self.actual_fit_count >= self.spec.max_fits:
+                raise RuntimeError("Cross-validation exhausted the actual fit budget")
+            self.actual_fit_count += 1
+            record.fit_count += 1
+            record.fit_index = self.actual_fit_count
+            self.emit("fit_started", record, fold=index)
         try:
             with threadpool_limits(limits=1):
-                session = prepare_experiment(trial_config, snapshot=self.snapshot, sequence_plan=self.sequence_plan)
+                session = prepare_experiment(trial_config, snapshot=self.snapshot, sequence_plan=self.sequence_plan, _before_cv_fit=before_cv_fit)
                 record.training_curves = _session_training_curves(session)
                 record.objective_value, record.metrics = score_session(session, self.objective, self.snapshot)
             if session.test_evaluation_count or "test" in session.metrics:
@@ -479,7 +491,10 @@ class _SearchEngine:
                 validate_extended_parameters(trial_config.model_id, trial_config.parameters)
             else:
                 estimator = build_estimator(trial_config.model_id, trial_config.parameters, seed=trial_config.split.seed)
-                estimator._validate_params()
+                # Third-party sklearn-compatible estimators need not implement
+                # sklearn's private parameter-constraint metadata.
+                if hasattr(estimator, "_parameter_constraints"):
+                    estimator._validate_params()
             record.config_sha256 = _canonical_config(trial_config)[1]
             record.cache_key = _json_digest({"search": self.fingerprint, "config": record.config_sha256})
         except (ValueError, TypeError) as exc:
@@ -583,7 +598,11 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
     config = ExperimentConfig.from_dict(config) if isinstance(config, dict) else config
     config = ExperimentConfig.from_dict(config.to_dict())
     spec = SearchSpec.from_dict(spec)
+    if spec.objective.objective_labels_column is None:
+        spec.objective.objective_labels_column = config.dataset.reference_labels_column
     spec.objective = spec.objective.resolve(config.task)
+    if config.evaluation is not None and spec.max_fits < config.evaluation.folds + 1:
+        raise ValueError("Fit budget must cover the main model plus every cross-validation fold")
     if get_model(config.model_id)["task"] != config.task:
         raise ValueError("Model/task mismatch")
     resumed = SearchResume.from_dict(resume) if resume is not None else None
@@ -600,7 +619,7 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
             sequence_plan = sequence_plan or built_plan
         else:
             snapshot = build_snapshot(config, objective_labels_column=spec.objective.objective_labels_column)
-    if config.model_id in {"H01", "H02", "H03", "N04", "N06"} and sequence_plan is None and resumed is not None:
+    if config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"} and sequence_plan is None and resumed is not None:
         if not resumed.sequence_plan_path or not resumed.sequence_plan_receipt:
             raise ValueError("Resumed sequence search is missing its owned plan receipt")
         sequence_plan = load_owned_sequence_plan(
@@ -610,7 +629,7 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
             config=config,
             snapshot=snapshot,
         )
-    if config.model_id in {"H01", "H02", "H03", "N04", "N06"} and sequence_plan is None:
+    if config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"} and sequence_plan is None:
         raise ValueError("Sequence-model search requires an owned SequencePlan")
     if sequence_plan is not None:
         sequence_plan.verify(config, snapshot)
@@ -628,7 +647,7 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
         if scored.isna().any() or set(scored.unique()) != {-1, 1}:
             raise ValueError("Objective partition must contain normal (+1) and anomaly (-1) labels")
     engine = _SearchEngine(config, spec, snapshot, job_id or str(uuid.uuid4()), on_event, should_cancel, wait_for_dispatch, resumed, artifact_dir, sequence_plan=sequence_plan, error_handler=error_handler)
-    engine.emit("search_started", snapshot=snapshot.to_dict(), snapshot_path=engine.snapshot_path, fingerprint=engine.fingerprint, spec=spec.to_dict())
+    engine.emit("search_started", snapshot=snapshot.to_dict(), snapshot_path=engine.snapshot_path, fingerprint=engine.fingerprint, spec=spec.to_dict(), fits_per_candidate=1 + (config.evaluation.folds if config.evaluation is not None else 0))
     try:
         engine.retry_pending()
         _adapter(engine)
@@ -657,7 +676,7 @@ def load_search_result(payload):
     sequence_plan = None
     sequence_plan_path = payload.get("sequence_plan_path")
     sequence_plan_receipt = payload.get("sequence_plan_receipt")
-    if config.model_id in {"H01", "H02", "H03", "N04", "N06"}:
+    if config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
         if not sequence_plan_path or not sequence_plan_receipt:
             raise ValueError("Search result is missing its owned sequence plan receipt")
         sequence_plan = load_owned_sequence_plan(

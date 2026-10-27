@@ -16,9 +16,7 @@ internal static class AppLauncher
     {
         try
         {
-            string directory = Path.GetFullPath(Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory,
-                @"..\PY-ML\dist\ui-polish-20261008\PYML-Workbench-standard"));
+            string directory = @"D:\program\PYML\main\delivery\installed\PYML-Workbench-full";
             string executable = Path.Combine(directory, "PYML-Workbench.exe");
             if (!File.Exists(executable) || !File.Exists(Path.Combine(directory, "PYML-Worker.exe"))
                 || !Directory.Exists(Path.Combine(directory, "_internal")))

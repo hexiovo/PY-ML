@@ -9,7 +9,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import KBinsDiscretizer, MinMaxScaler, OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, KBinsDiscretizer, MinMaxScaler, OneHotEncoder, StandardScaler
 
 from .catalog import build_estimator, get_model
 from .data import DatasetError
@@ -65,6 +65,8 @@ def build_preprocessor(
         raise DatasetError("Features must be a pandas DataFrame with named columns")
     if features.shape[1] == 0:
         raise DatasetError("At least one feature column is required")
+    if get_model(model_id).get("raw_features"):
+        return FunctionTransformer(validate=False), {"input_adapter": "Member-local train-fitted pipelines", "fit_policy": "Each inner fold fits its own preprocessing"}
     estimator = build_estimator(model_id, parameters)
     class_name = estimator.__class__.__name__
     numeric_columns: list[Any] = []

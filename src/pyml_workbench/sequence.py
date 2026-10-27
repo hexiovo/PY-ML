@@ -40,7 +40,7 @@ _RECEIPT_FIELDS = {
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SPLIT_NAMES = ("train", "validation", "test")
 _HMM_IDS = {"H01": "hmm_continuous", "H02": "hmm_continuous", "H03": "hmm_categorical"}
-_WINDOW_IDS = {"N04": "window_regression", "N06": "window_regression"}
+_WINDOW_IDS = {name: "window_regression" for name in ("N04", "N06", "N07", "N08", "N09")}
 
 
 class SequenceError(ValueError):
@@ -158,11 +158,11 @@ class SequenceConfig:
                 raise SequenceError("H03 CategoricalHMM requires exactly one observation column")
         elif model_id in _WINDOW_IDS:
             if task != "regression":
-                raise SequenceError("N04/N06 sequence models require task='regression'")
+                raise SequenceError("窗口回归模型 sequence models require task='regression'")
             if not target_column:
-                raise SequenceError("N04/N06 sequence regression requires a target column")
+                raise SequenceError("窗口回归模型 sequence regression requires a target column")
             if not selected:
-                raise SequenceError("N04/N06 sequence regression requires feature columns")
+                raise SequenceError("窗口回归模型 sequence regression requires feature columns")
             if self.observation_columns is not None:
                 raise SequenceError("observation_columns applies only to HMM models")
         elif model_id is not None:
@@ -439,13 +439,13 @@ def build_sequence_plan(
         training_rows = list(positions["train"]) + list(positions["validation"])
         training_target = target.iloc[training_rows]
         if training_target.isna().any():
-            raise SequenceError("N04/N06 train/validation targets contain missing values")
+            raise SequenceError("窗口回归模型 train/validation targets contain missing values")
         try:
             numeric = pd.to_numeric(training_target, errors="raise").to_numpy(dtype=np.float32)
         except (TypeError, ValueError, OverflowError) as exc:
-            raise SequenceError("N04/N06 train/validation targets must be numeric and fit float32") from exc
+            raise SequenceError("窗口回归模型 train/validation targets must be numeric and fit float32") from exc
         if not np.isfinite(numeric).all():
-            raise SequenceError("N04/N06 train/validation targets must be finite")
+            raise SequenceError("窗口回归模型 train/validation targets must be finite")
         target_numeric_by_row = {int(row): float(value) for row, value in zip(training_rows, numeric)}
 
     categorical_alphabet: tuple[JSONValue, ...] = ()
@@ -532,7 +532,7 @@ def build_sequence_plan(
                 needed = config.window + config.horizon
                 if len(group_rows) < needed:
                     raise SequenceError(
-                        f"N04/N06 split {name!r} group {group['label']!r} has {len(group_rows)} rows; "
+                        f"窗口回归模型 split {name!r} group {group['label']!r} has {len(group_rows)} rows; "
                         f"window={config.window}, horizon={config.horizon} requires at least {needed}"
                     )
                 window_count = len(group_rows) - needed + 1
@@ -540,7 +540,7 @@ def build_sequence_plan(
                     source_maps.append(group_rows[start : start + config.window])
                     target_maps.append(int(group_rows[start + needed - 1]))
             if not source_maps:
-                raise SequenceError(f"N04/N06 split {name!r} has no valid windows")
+                raise SequenceError(f"窗口回归模型 split {name!r} has no valid windows")
             window_source_positions = np.stack(source_maps).astype(np.int64, copy=False)
             window_target_positions = np.asarray(target_maps, dtype=np.int64)
             feature_values = features.to_numpy(dtype=object, copy=True)

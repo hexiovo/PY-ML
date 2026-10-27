@@ -81,7 +81,7 @@ def freeze_selection(search_result: SearchResult, *, winner_trial_id=None) -> Fr
     snapshot = search_result.snapshot
     snapshot.verify(config)
     sequence_plan = search_result.sequence_plan
-    if config.model_id in {"H01", "H02", "H03", "N04", "N06"}:
+    if config.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}:
         if sequence_plan is None:
             raise ExperimentError("Sequence-model winner has no owned SequencePlan")
         sequence_plan.verify(config, snapshot)
@@ -93,7 +93,7 @@ def freeze_selection(search_result: SearchResult, *, winner_trial_id=None) -> Fr
         raise ExperimentError("Winner session does not match the search SequencePlan")
     metadata = dict(job_id=search_result.job_id, winner_trial_id=winner.trial_id, config=config.to_dict(), snapshot=snapshot.to_dict(), search_fingerprint=search_result.fingerprint, objective=search_result.spec.objective.to_dict(), objective_value=winner.objective_value, validation_metrics=json_copy(winner.metrics), fit_scope="train_validation", sequence_plan_manifest=sequence_plan.to_dict() if sequence_plan is not None else None)
     extended_metadata = getattr(session, "extended_training_metadata", None)
-    if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
+    if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}:
         refit_provenance = getattr(session, "refit_provenance", None)
         if not isinstance(extended_metadata, dict) or not isinstance(refit_provenance, dict):
             raise ExperimentError("Extended winner is missing its training provenance")
@@ -401,7 +401,11 @@ def finalize_selected(
                     raise ExperimentError("Final anomaly objective labels are invalid")
                 if set(expected.unique()) == {-1, 1}:
                     predictions = session.result.results.loc[session.result.results["split"] == "test", "y_pred"].to_numpy()
-                    session.metrics["test"]["balanced_accuracy"] = float(balanced_accuracy_score(expected.to_numpy(), predictions))
+                    from .metrics import anomaly_metrics
+                    estimator = session.fitted_model.estimator
+                    test_positions = session.splits["test"]
+                    scores = estimator.score_samples(session.fitted_model.preprocessor.transform(session.features.iloc[test_positions])) if callable(getattr(estimator, "score_samples", None)) else None
+                    session.metrics["test"].update(anomaly_metrics(expected.to_numpy(), predictions, scores))
                 else:
                     session.metrics["test"]["objective_note"] = "Final partition has only one objective label class; balanced accuracy was not reported"
             envelope["state"] = "tested"

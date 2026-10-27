@@ -28,7 +28,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _WRAPPER_REQUIRED = {"schema", "config", "sha256"}
 _WRAPPER_ALLOWED = _WRAPPER_REQUIRED | {"name"}
 _CONFIG_REQUIRED = {"dataset", "task", "model_id", "parameters", "split", "output_dir"}
-_CONFIG_ALLOWED = _CONFIG_REQUIRED | {"sequence"}
+_CONFIG_ALLOWED = _CONFIG_REQUIRED | {"sequence", "evaluation"}
 _DATASET_FIELDS = {"source_path", "sheet_name", "target_column", "feature_columns"}
 _SPLIT_FIELDS = {"seed", "train_fraction", "validation_fraction", "test_fraction"}
 
@@ -104,11 +104,11 @@ def _validate_config_shape(payload: Any) -> dict[str, Any]:
         raise PresetError("preset config has missing or unknown fields")
 
     dataset = payload.get("dataset")
-    if not isinstance(dataset, dict) or set(dataset) != _DATASET_FIELDS:
+    if not isinstance(dataset, dict) or not _DATASET_FIELDS.issubset(dataset) or set(dataset) - (_DATASET_FIELDS | {"reference_labels_column"}):
         raise PresetError("preset dataset fields are incomplete or unknown")
     if not isinstance(dataset.get("source_path"), str):
         raise PresetError("dataset.source_path must be a string path")
-    for key in ("sheet_name", "target_column"):
+    for key in ("sheet_name", "target_column", "reference_labels_column"):
         if dataset.get(key) is not None and not isinstance(dataset.get(key), str):
             raise PresetError(f"dataset.{key} must be a string or null")
     features = dataset.get("feature_columns")
@@ -122,7 +122,7 @@ def _validate_config_shape(payload: Any) -> dict[str, Any]:
     if not isinstance(payload.get("parameters"), dict):
         raise PresetError("parameters must be a JSON object")
     split = payload.get("split")
-    if not isinstance(split, dict) or set(split) != _SPLIT_FIELDS:
+    if not isinstance(split, dict) or not _SPLIT_FIELDS.issubset(split) or set(split) - (_SPLIT_FIELDS | {"strategy", "group_column", "time_column"}):
         raise PresetError("split fields are incomplete or unknown")
     seed = split.get("seed")
     if isinstance(seed, bool) or not isinstance(seed, int):

@@ -4,29 +4,102 @@
   "profiles": {
     "standard": {
       "title": "标准版",
-      "summary": "桌面向导、表格工具与 71 个 scikit-learn 模型；包含 Grid、随机和退火搜索。",
-      "extras": ["desktop"],
-      "model_sections": ["active_models"],
-      "collect_submodules": ["sklearn"],
-      "exclude_modules": ["hmmlearn", "skorch", "torch", "optuna", "pymoo", "moocore", "xgboost", "lightgbm", "catboost"],
+      "summary": "桌面向导与 90 个基础模型（84 个 scikit-learn、4 个模型融合、2 个朴素时序基线）；包含 Grid、随机和退火搜索。",
+      "extras": [
+        "desktop"
+      ],
+      "model_sections": [
+        "active_models"
+      ],
+      "collect_submodules": [
+        "sklearn"
+      ],
+      "exclude_modules": [
+        "hmmlearn",
+        "skorch",
+        "torch",
+        "optuna",
+        "pymoo",
+        "moocore",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "statsmodels",
+        "umap",
+        "numba",
+        "llvmlite",
+        "pynndescent"
+      ],
       "runtime_distributions": [
-        "numpy", "scipy", "pandas", "scikit-learn", "threadpoolctl", "openpyxl",
-        "PySide6", "matplotlib", "xlrd"
+        "numpy",
+        "scipy",
+        "pandas",
+        "scikit-learn",
+        "threadpoolctl",
+        "openpyxl",
+        "PySide6",
+        "matplotlib",
+        "xlrd"
       ]
     },
     "full": {
       "title": "完整扩展版",
-      "summary": "标准版能力加 HMM、深度模型、TPE 与遗传搜索。",
-      "extras": ["desktop", "search", "sequence", "deep"],
-      "model_sections": ["active_models", "deferred_models"],
-      "collect_submodules": ["sklearn", "optuna", "pymoo"],
+      "summary": "全部 111 个目录模型，含提升树、HMM、深度网络、UMAP、传统时序，以及 TPE/遗传搜索。",
+      "extras": [
+        "desktop",
+        "search",
+        "sequence",
+        "deep",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "manifold",
+        "forecasting"
+      ],
+      "model_sections": [
+        "active_models",
+        "deferred_models"
+      ],
+      "collect_submodules": [
+        "sklearn",
+        "optuna",
+        "pymoo",
+        "statsmodels.tsa",
+        "umap"
+      ],
       "exclude_modules": [],
       "runtime_distributions": [
-        "numpy", "scipy", "pandas", "scikit-learn", "threadpoolctl", "openpyxl",
-        "PySide6", "matplotlib", "xlrd", "hmmlearn", "torch", "skorch", "optuna",
-        "pymoo", "moocore"
+        "numpy",
+        "scipy",
+        "pandas",
+        "scikit-learn",
+        "threadpoolctl",
+        "openpyxl",
+        "PySide6",
+        "matplotlib",
+        "xlrd",
+        "hmmlearn",
+        "torch",
+        "skorch",
+        "optuna",
+        "pymoo",
+        "moocore",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+        "umap-learn",
+        "statsmodels",
+        "numba",
+        "llvmlite",
+        "pynndescent",
+        "patsy",
+        "formulaic",
+        "interface-meta"
       ]
     }
   },
-  "build_distributions": ["PyInstaller", "pyinstaller-hooks-contrib"]
+  "build_distributions": [
+    "PyInstaller",
+    "pyinstaller-hooks-contrib"
+  ]
 }

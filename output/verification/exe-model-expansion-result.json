@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-27",
+  "result": "OK",
+  "profile": "full",
+  "version": "0.4.4",
+  "model_count": 111,
+  "git_branch": "codex/models111-exe-20261027",
+  "remote_master_preserved": true,
+  "executable": "dist/model-expansion-20261027/PYML-Workbench-full/PYML-Workbench.exe",
+  "archive": "dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip",
+  "folder_bytes": 1398967649,
+  "archive_bytes": 574452890,
+  "sha256": {
+    "dist/model-expansion-20261027/PYML-Workbench-full/PYML-Workbench.exe": "1356e155299edb8cb7dbacf7576a23d7da5522ac07596fe21fb0806dbd4beebf",
+    "dist/model-expansion-20261027/PYML-Workbench-full/PYML-Worker.exe": "59e9e30aacb83e04c4d0fa819d32b1ad97e236bfa822c31906d3e6ca2cc2cd85",
+    "dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip": "3b5ae938a8d546a0897abaca4da869ce416af39ffa7697cb4191ada682e1b22e"
+  },
+  "validation": {
+    "embedded_source_checks": 80,
+    "new_and_boosting_model_cases": 33,
+    "expansion_cli_calls": 102,
+    "cross_validation_recheck_calls": 3,
+    "legacy_cli_checks": 28,
+    "source_qt_to_frozen_worker": "OK",
+    "frozen_gui_and_f1_guide": "OK",
+    "relocated_gui_and_worker": "OK",
+    "zip_data_files_verified": 4731,
+    "source_unit_tests_previously_completed": 31
+  },
+  "harness_corrections": [
+    "Initial GUI checks read existing recovery state; subsequent checks isolate APPDATA/LOCALAPPDATA/checkpoints and synthetic test checkpoints were cleaned.",
+    "Initial expansion harness used top-level test_evaluation_count for batch-finalize; corrected to final_selection.test_evaluation_count and reran CV lifecycle successfully. All original 102 EXE calls returned zero."
+  ],
+  "evidence_root": "delivery/model-expansion-20261027/exe",
+  "limitations": [
+    "Windows x64 build-host validation; no clean VM test",
+    "Representative model verification, not a refit of every catalog entry",
+    "Existing installation and remote master were not replaced",
+    "EXE/ZIP are local release artifacts; Git contains source and checksums"
+  ]
+}

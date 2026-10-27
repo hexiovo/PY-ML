@@ -66,7 +66,7 @@ uv sync --locked --no-editable --no-dev --extra desktop
 | 5. 运行监控 | 实际阶段、已完成模型/组合、活动时长和 ETA | 指标只在模型真实计算后出现 |
 | 6. 结果与导出 | 结果、图表、预测明细、模型和摘要 | 选择所需内容及输出格式 |
 
-向导进度反映真实阶段与已完成的组合。剩余时间和预计完成时间根据当前活动时长及实际进展估算；尚未完成的模型不会显示预测准确率。分类与回归各自只显示可用指标。CPU worker 数按安全上限运行；GPU 只用于已实现 CUDA 路径的 N01，设备缺失时应选择 CPU。
+向导进度始终显示当前处理阶段和剩余时间参考。没有可用耗时样本时先显示明确标注的初始估计；训练阶段和搜索随后按实际完成的拟合耗时更新。历史拟合次数只用于预算进度，不会当作已完成拟合样本数。估计不是保证结束时间；尚未完成的模型不会显示预测准确率。分类与回归各自只显示可用指标。CPU worker 数按安全上限运行；GPU 只用于已实现 CUDA 路径的 N01，设备缺失时应选择 CPU。
 
 “批量搜索队列”仍可直接打开用于持久化批次、历史恢复和高级预算控制。指南入口可随时打开，阅读不会启动训练或修改配置。
 
@@ -349,3 +349,15 @@ print(predict(model, pd.read_csv("new-data.csv")))
 完整专题文档随发行目录保存：`docs/user-guide.md`（单任务）、`docs/batch-guide.md`（批量）、`docs/sequence-guide.md`（序列）、`docs/deep-learning-guide.md`（深度）、`docs/api-guide.md`（API）、`docs/model-index.md`（模型/参数）、`docs/third-party.md`（来源/许可证）、`docs/exe-guide.md`（EXE）、`docs/development.md`（开发）。更新记录见 `version.md`。
 
 当前在 Windows 11 x64 本机检查；未验证干净虚拟机、其他 Windows 版本、GPU 或所有用户数据。模型能运行不等于预测质量合格，最终判断应结合独立评估和业务要求。
+
+### 2026-10-27 源码扩展操作
+
+当前源码有 111 个模型，新增 Dummy、Voting/Stacking/Bagging、GMM、HDBSCAN、贝叶斯/稳健/核/PLS 回归、UMAP、Autoencoder、传统时序及 CNN/TCN/Transformer。2026-10-27 完整扩展版 ZIP 已单独构建并包含本轮功能，历史 EXE 保留。
+
+“算法与评价”页现在可选择任务兼容的搜索目标，自动确定指标方向。分类增加 AUC、AP、PR-AUC、Log Loss、Brier、MCC、Kappa、加权和逐类指标；回归增加 MSE、中位误差、MAPE、MSLE/RMSLE、分位数损失及 sMAPE；有训练序列时提供 MASE 和预测步长误差；聚类/异常可用独立参考标签计算外部指标。未定义的值显示 null 和原因。
+
+在模型参数下方的“划分与评价 JSON”可填 `{"split":{"strategy":"time","time_column":"time"},"cross_validation":{"folds":5,"strategy":"time","gap":0}}`。分组验证则把 strategy 改为 group 并指定 group_column。折评估只使用训练+验证开发区，每折独立拟合预处理，保留最终测试集；搜索比较折均值并保存标准差。每个候选需计入 1 次主模型和所有训练折。普通表格折评估支持表格分类/回归与 T01–T05；窗口神经网络仍使用 SequencePlan 验证和早停。
+
+T01–T05 是单序列固定起点预测，需要时间划分；只使用历史目标，未来表格行数代表连续预测步数。T02 默认季节长度 12。N07/N08/N09 沿用序列配置中的 window 和 horizon。UMAP 需要 manifold extra，指数平滑/ARIMA/SARIMA 需要 forecasting extra。
+
+本轮完整 EXE 的 ZIP 名为 `PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip`。完整解压后启动 `PYML-Workbench.exe`；当前包包含本轮可选库，无需安装 Python。请保留 worker 和整个 `_internal`，不要只复制一个 EXE。

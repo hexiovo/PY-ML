@@ -258,7 +258,7 @@ def _session_action(args, context: dict[str, Any]) -> None:
             if path == Path(config.dataset.source_path).expanduser().resolve():
                 raise SessionError("Session path cannot replace the input dataset")
             _emit(context, "progress", name="preparing")
-            if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06"}:
+            if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}:
                 snapshot, sequence_plan = build_extended_snapshot(config)
             else:
                 snapshot, sequence_plan = build_snapshot(config), None
@@ -345,13 +345,14 @@ def _inference(args, context):
     if not fitted.capabilities.get(operation, False):
         raise ValueError(f"已加载模型不支持 {operation}，未运行推理")
     dataset = load_dataset(args.data, sheet_name=args.sheet)
-    sequence_model = fitted.model_id in {"H01", "H02", "H03", "N04", "N06"}
+    sequence_model = fitted.model_id in {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
     if sequence_model and operation != "predict":
         raise ValueError(f"{fitted.model_id} 的 CSV 序列适配器只支持 predict，未运行推理")
-    missing = [name for name in fitted.feature_columns if name not in dataset.frame.columns]
+    forecast_model = fitted.model_id.startswith("T")
+    missing = [] if forecast_model else [name for name in fitted.feature_columns if name not in dataset.frame.columns]
     if missing:
         raise ValueError(f"新数据缺少模型需要的特征列：{missing}")
-    values = dataset.frame.loc[:, fitted.feature_columns]
+    values = dataset.frame if forecast_model else dataset.frame.loc[:, fitted.feature_columns]
     output_path = args.output.expanduser().resolve()
     if output_path.exists():
         raise FileExistsError(f"为防止覆盖现有文件，拒绝写入：{output_path}")
@@ -373,6 +374,8 @@ def _inference(args, context):
         else:
             prefix = {"transform": "component", "predict_proba": "probability", "decision_function": "decision"}.get(operation, "prediction")
             output = pd.DataFrame(array, columns=[f"{prefix}_{index + 1}" for index in range(array.shape[1])])
+        if forecast_model:
+            output.insert(0, "forecast_horizon", np.arange(1, len(output) + 1))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("x", encoding="utf-8-sig", newline="") as handle:
         output.to_csv(handle, index=False)
@@ -436,6 +439,7 @@ def _batch_action(
                     "job_id": job["job_id"], "status": job["status"],
                     "model_id": job["model_id"], "task": job["task"],
                     "artifact_dir": job["artifact_dir"],
+                    "spec": json.loads(job.get("search_json") or "{}"),
                 }
                 for job in jobs
             ],

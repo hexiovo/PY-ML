@@ -79,10 +79,12 @@ python packaging/build_release.py --profile standard
 
 构建完整扩展版时，在同步命令上再加 `--extra search --extra sequence --extra deep`，并将两个构建命令中的 `standard` 改为 `full`。构建器检查 Python 必须为 3.12.14；它把 profile 传给 spec，并输出到各自目录和带 profile 名称的 ZIP。若当前 profile 的目录、ZIP 或 PyInstaller 工作目录已存在，构建会在 PyInstaller 启动前退出并保留原文件。可给 `build_release.py` 传入绝对的 `--work-dir`，将临时构建中间文件放到发行输出以外。每次实际构建生成 `delivery/exe-<version>/<profile>-release-result.json`，记录目录和 ZIP 的实测字节数；没有构建记录时不要声称已实测缩小。
 
-- 一次运行使用固定的 60/20/20 划分；预处理只在训练分区拟合。
+- 默认运行使用原有 60/20/20 随机/分层划分；可选整组或时间划分及外层折验证。折验证仅使用训练+验证开发分区，每个候选的主模型和每一训练折分别计入预算；各折预处理只在各自训练行拟合。详见 [扩展指南](model-expansion.md)。
 - 验证结果用于检查当前配置；测试数据只在 `freeze_experiment` 之后通过 `evaluate_test` 使用一次。
 - 批量搜索每个组合最多 50 次真实拟合、250 个 proposals 和 20 分钟活动时间；最多并行 2 个 worker，每个数值线程数为 1。搜索只读取训练/验证分区，winner 必须先显式冻结，再用训练+验证数据重拟合并测试一次。
 - 固定手动参数也可作为一次候选运行：空 `fields` 的搜索空间只接受 Grid；每个 fixed 和基础模型参数都经 estimator 参数/类型校验，随机/TPE/遗传/退火的空变量空间必须以清楚错误拒绝。
 - 保存模型必须包含预处理和 estimator，并保留能力信息。对于未提供新数据 `predict`/`transform` 的算法，报告不可用能力而不是替代拟合或声称支持。
 - 只新增由当前获批范围要求的依赖。HMM/deep 可选依赖不得进入 base；它们的 lazy import 应保证仅安装 base 时包根目录、传统模型和 API 可导入。
 - 改动文档或功能时更新根目录 `version.md` 中的交付状态和验证范围；独立 S02 验收完成前不得标记 PASS。
+
+新增模块：`metrics.py` 管理指标目录与定义域；`validation.py` 管理分组/时间划分和训练+验证分区内的折评估；`ensembles.py` 提供 JSON 融合适配器；`forecast_models.py` 提供固定起点预测；`autoencoder.py` 提供可携带 NumPy 权重的降维模型。新增可选依赖分别在 `manifold` 与 `forecasting` extras 内，继续保持 lazy import。

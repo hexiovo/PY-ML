@@ -1,6 +1,6 @@
 # pyml-workbench
 
-`pyml-workbench` 是面向表格和序列数据的 Python 包和中文 Windows 桌面工作台，提供单模型流程与多数据集/多模型验证搜索队列。Python 导入名为 `pyml_workbench`。当前目录有 84 个可运行模型：71 个 scikit-learn 模型、6 个可选提升树模型、3 个 HMM 和 4 个深度学习模型。提升树模型各自使用独立 extra；HMM 使用 `sequence` extra，深度模型使用 `deep` extra。
+`pyml-workbench` 是面向表格和序列数据的 Python 包和中文 Windows 桌面工作台，提供单模型流程与多数据集/多模型验证搜索队列。Python 导入名为 `pyml_workbench`。当前源码目录有 111 个可运行模型：84 个 scikit-learn 模型、4 个融合适配器、5 个传统时序模型、UMAP、Autoencoder、6 个可选提升树模型、3 个 HMM 和 7 个监督深度模型。基础安装覆盖 90 项；本轮新增指标、交叉验证和算法接入见[扩展指南](docs/model-expansion.md)。2026-10-27 已新增包含本轮功能的完整扩展版 EXE，历史发行包保留。提升树模型各自使用独立 extra；HMM 使用 `sequence` extra，深度模型使用 `deep` extra。
 
 本 README 记录 **0.4.4 断点恢复版（2026-10-07）**：在原 0.4.4 功能上加入单任务与批量进度、设置和结果的跨启动恢复，以及安全退出；中断的计算步骤整步重新开始。标准版继续不打包提升树 SDK。发布内容、验证范围和已知限制见[版本记录](version.md)。
 
@@ -10,9 +10,11 @@
 
 ## 安装与启动
 
-后续 Windows 发行支持两种 PyInstaller profile：`standard` 保留桌面向导、71 个 scikit-learn 模型及 Grid/随机/退火搜索；`full` 额外包含 HMM、PyTorch/skorch 深度模型、TPE 与遗传搜索。profile 依赖清单见 `packaging/profiles.json`。在 Python 3.12.14 打包环境安装对应 `desktop` 或全部 extras 及 `packaging/build-requirements.txt` 后，运行 `python packaging/build_release.py --profile standard` 或 `--profile full`；可加 `--work-dir <绝对的新临时目录>` 将 PyInstaller 中间文件放在发行输出以外，并可加 `--dry-run` 查看命令。新输出目录与 ZIP 带有 profile 名称，保留既有 0.4.2 发行目录。实际文件大小以各次 `release-result.json` 为准；未构建的 profile 不代表已测量体积变化。
+**本轮 EXE（完整扩展版，111 个目录模型）：** 下载并完整解压 [2026-10-27 ZIP](dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip)，双击 `PYML-Workbench.exe`。本机新目录为 `dist/model-expansion-20261027/PYML-Workbench-full`；无需安装 Python，必须保留 worker 与 `_internal`。源码和校验信息记录在 Git，EXE/ZIP 保留为本地发行文件。操作与检查范围见 [EXE 指南](docs/exe-guide.md)。
 
-0.4.4 标准版 Windows EXE 可从 [ZIP 发行包](dist/PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip) 获取，程序目录位于 `dist/ui-polish-20261008/PYML-Workbench-standard`：双击 `PYML-Workbench.exe`。本机也可使用 `F:/桌面/程序/APP/PY-ML 机器学习工作台.exe` 入口。新版包含操作指南、悬停菜单、GitHub Issue 联系入口和适配 Windows 缩放的启动动画。原有发行保留。复制或解压时必须保留整个文件夹，包括 `PYML-Worker.exe` 和 `_internal`，不能只复制主 EXE；使用者不需要另装 Python。Windows 打包与验证说明见[EXE 指南](docs/exe-guide.md)。
+后续 Windows 发行支持两种 PyInstaller profile：`standard` 保留桌面向导、90 个基础模型及 Grid/随机/退火搜索；`full` 额外包含 HMM、PyTorch/skorch 深度模型、UMAP、传统统计预测、提升树、TPE 与遗传搜索。profile 依赖清单见 `packaging/profiles.json`。在 Python 3.12.14 打包环境安装对应 `desktop` 或全部 extras 及 `packaging/build-requirements.txt` 后，运行 `python packaging/build_release.py --profile standard` 或 `--profile full`；可加 `--work-dir <绝对的新临时目录>` 将 PyInstaller 中间文件放在发行输出以外，并可加 `--dry-run` 查看命令。新输出目录与 ZIP 带有 profile 名称，保留既有 0.4.2 发行目录。实际文件大小以各次 `release-result.json` 为准；未构建的 profile 不代表已测量体积变化。
+
+0.4.4 标准版 Windows EXE 可从 [ZIP 发行包](dist/PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip) 获取，程序目录位于 `dist/ui-polish-20261008/PYML-Workbench-standard`：双击 `PYML-Workbench.exe`。此处是历史标准版；使用本轮新增模型请启动上方完整扩展版。新版包含操作指南、悬停菜单、GitHub Issue 联系入口和适配 Windows 缩放的启动动画。原有发行保留。复制或解压时必须保留整个文件夹，包括 `PYML-Worker.exe` 和 `_internal`，不能只复制主 EXE；使用者不需要另装 Python。Windows 打包与验证说明见[EXE 指南](docs/exe-guide.md)。
 
 单任务和批量搜索会在用户数据目录保存基本设置与已完成的进度、结果；发现记录时可选择恢复或新建。安全退出会停止当前计算并自动保存此前完成的步骤；例如 500 次迭代中途退出，恢复时这一整步从第 1 次重新计算。恢复已完成的批次只加载结果；选择新建且设置有效时，会开始独立的新批次。
 
@@ -29,7 +31,7 @@ uv sync --locked --no-editable --no-dev --extra desktop --extra search
 .\.venv\Scripts\python.exe -X utf8 -m pyml_workbench
 ```
 
-安装为 non-editable：uv 会构建并安装本地包到虚拟环境，而不是从源码目录导入。基础依赖包括 `openpyxl`，供 XLSX 读取和默认结果导出使用；`desktop` extra 提供 Qt 界面、指标图、基础图表和旧版 XLS 输入。完整搜索后端由 `search` extra 提供；只安装基础依赖仍可使用 Grid、随机和退火搜索，TPE 与遗传搜索需要 Optuna/pymoo。提升树库不会随基础、`standard` 或 `full` 配置自动安装；需要时，在同步命令中分别追加 `--extra xgboost`、`--extra lightgbm` 或 `--extra catboost`。应用启动时只检查可选包是否可发现，缺包时不会自动安装，并会说明对应 extra。要启用 HMM 或深度模型，可分别追加 `--extra sequence` 或 `--extra deep`。修改包源码后需再次同步；开发者命令见[开发指南](docs/development.md)。`-X utf8` 用于让中文路径、日志和 JSON 在 Windows 上使用一致的 UTF-8 编码。
+安装为 non-editable：uv 会构建并安装本地包到虚拟环境，而不是从源码目录导入。基础依赖包括 `openpyxl`，供 XLSX 读取和默认结果导出使用；`desktop` extra 提供 Qt 界面、指标图、基础图表和旧版 XLS 输入。完整搜索后端由 `search` extra 提供；只安装基础依赖仍可使用 Grid、随机和退火搜索，TPE 与遗传搜索需要 Optuna/pymoo。提升树库不会随基础或 `standard` 配置自动安装；当前 `full` 构建配置包含这些 extras。源码运行单独启用时，需要时，在同步命令中分别追加 `--extra xgboost`、`--extra lightgbm` 或 `--extra catboost`。应用启动时只检查可选包是否可发现，缺包时不会自动安装，并会说明对应 extra。要启用 HMM 或深度模型，可分别追加 `--extra sequence` 或 `--extra deep`。修改包源码后需再次同步；开发者命令见[开发指南](docs/development.md)。`-X utf8` 用于让中文路径、日志和 JSON 在 Windows 上使用一致的 UTF-8 编码。
 
 ## 当前交付范围
 
@@ -48,7 +50,7 @@ uv sync --locked --no-editable --no-dev --extra desktop --extra search
 - 在“文件”菜单选择“导出诊断包…”可将当前 GUI 会话或指定 `error_id` 导出为脱敏 ZIP；保存位置由用户选择，程序不会上传或覆盖已有文件。
 - 在“文件”菜单选择“打开统一操作日志…”可查看持续追加的 UTF-8 应用操作记录；源码运行时文件位于项目目录，打包运行时位于 EXE 目录。
 
-详细单任务和基础图表操作见[用户指南](docs/user-guide.md)，批量队列、搜索配置和批量结果图见[批量搜索指南](docs/batch-guide.md)，序列配置见[序列建模指南](docs/sequence-guide.md)，深度模型见[深度学习指南](docs/deep-learning-guide.md)，Python 接口见[API 指南](docs/api-guide.md)，84 项模型目录见[模型与参数索引](docs/model-index.md)。[扩展模型合成示例](examples/synthetic_extended.py)覆盖 HMM 与 N06 的验证、冻结、测试、导出和推理。运行时和许可证来源见[第三方组件说明](docs/third-party.md)。版本状态与未覆盖范围见 [`version.md`](version.md)。
+详细单任务和基础图表操作见[用户指南](docs/user-guide.md)，批量队列、搜索配置和批量结果图见[批量搜索指南](docs/batch-guide.md)，序列配置见[序列建模指南](docs/sequence-guide.md)，深度模型见[深度学习指南](docs/deep-learning-guide.md)，Python 接口见[API 指南](docs/api-guide.md)，111 项源码模型目录见[模型与参数索引](docs/model-index.md)。[扩展模型合成示例](examples/synthetic_extended.py)覆盖 HMM 与 N06 的验证、冻结、测试、导出和推理。运行时和许可证来源见[第三方组件说明](docs/third-party.md)。版本状态与未覆盖范围见 [`version.md`](version.md)。
 
 本仓库的自动化检查可这样运行：
 
@@ -61,3 +63,7 @@ uv sync --locked --no-editable --no-dev --extra desktop --extra search
 ```
 
 示例只创建临时的合成数据，不读取项目夹具或用户文件。当前格式验证覆盖 CSV、XLSX 和本轮使用 xlwt 生成的合成 OLE/BIFF8 `.xls` 样本；经应用导入核对两个工作表、六个字段、样本值及类型。这不代表对所有 XLS 文件的完整兼容保证。
+
+## 2026-10-27 源码扩展
+
+新增 27 个模型、分类/回归/有标签无监督指标，以及可选搜索目标、分组划分、滚动验证和 2–10 折交叉验证。界面“算法与评价”页可选择搜索指标，并在“划分与评价 JSON”配置验证方案。UMAP 与统计时序模型分别需要 `manifold`、`forecasting` extras。完整配置、指标定义与适用限制见[扩展指南](docs/model-expansion.md)。历史 EXE/ZIP 保留；本轮完整扩展版 ZIP 已另行构建。源码运行时使用项目启动器。

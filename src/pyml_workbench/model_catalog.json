@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source": "G2 approved RUN/evidence/selected-model-catalog-v1.csv",
-  "active_count": 77,
+  "source": "Original G2 catalog plus user-approved metrics/model expansion (2026-10-27)",
+  "active_count": 104,
   "deferred_count": 7,
   "active_models": [
     {
@@ -1015,7 +1015,9 @@
       "optional_module": "xgboost",
       "seed_parameter": "random_state",
       "thread_parameter": "n_jobs",
-      "builder_defaults": {"verbosity": 0},
+      "builder_defaults": {
+        "verbosity": 0
+      },
       "target_adapter": "label_encoded"
     },
     {
@@ -1035,7 +1037,9 @@
       "optional_module": "lightgbm",
       "seed_parameter": "random_state",
       "thread_parameter": "n_jobs",
-      "builder_defaults": {"verbosity": -1}
+      "builder_defaults": {
+        "verbosity": -1
+      }
     },
     {
       "id": "C27",
@@ -1054,7 +1058,11 @@
       "optional_module": "catboost",
       "seed_parameter": "random_seed",
       "thread_parameter": "thread_count",
-      "builder_defaults": {"verbose": false, "allow_writing_files": false, "task_type": "CPU"}
+      "builder_defaults": {
+        "verbose": false,
+        "allow_writing_files": false,
+        "task_type": "CPU"
+      }
     },
     {
       "id": "R24",
@@ -1073,7 +1081,9 @@
       "optional_module": "xgboost",
       "seed_parameter": "random_state",
       "thread_parameter": "n_jobs",
-      "builder_defaults": {"verbosity": 0}
+      "builder_defaults": {
+        "verbosity": 0
+      }
     },
     {
       "id": "R25",
@@ -1092,7 +1102,9 @@
       "optional_module": "lightgbm",
       "seed_parameter": "random_state",
       "thread_parameter": "n_jobs",
-      "builder_defaults": {"verbosity": -1}
+      "builder_defaults": {
+        "verbosity": -1
+      }
     },
     {
       "id": "R26",
@@ -1111,7 +1123,445 @@
       "optional_module": "catboost",
       "seed_parameter": "random_seed",
       "thread_parameter": "thread_count",
-      "builder_defaults": {"verbose": false, "allow_writing_files": false, "task_type": "CPU"}
+      "builder_defaults": {
+        "verbose": false,
+        "allow_writing_files": false,
+        "task_type": "CPU"
+      }
+    },
+    {
+      "id": "C28",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "sklearn.dummy.DummyClassifier",
+      "class_name": "DummyClassifier",
+      "display_name_zh": "分类 · DummyClassifier",
+      "algorithm_family": "baseline",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyClassifier.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "C29",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "pyml_workbench.ensembles.ConfigurableClassifier",
+      "class_name": "ConfigurableClassifier",
+      "display_name_zh": "分类 · VotingClassifier",
+      "algorithm_family": "voting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "",
+      "implementation_status": "available",
+      "raw_features": true
+    },
+    {
+      "id": "C30",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "pyml_workbench.ensembles.ConfigurableClassifier",
+      "class_name": "ConfigurableClassifier",
+      "display_name_zh": "分类 · StackingClassifier",
+      "algorithm_family": "stacking",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "",
+      "implementation_status": "available",
+      "raw_features": true,
+      "builder_defaults": {
+        "kind": "stacking"
+      }
+    },
+    {
+      "id": "C31",
+      "task": "classification",
+      "task_label_zh": "分类",
+      "implementation": "sklearn.ensemble.BaggingClassifier",
+      "class_name": "BaggingClassifier",
+      "display_name_zh": "分类 · BaggingClassifier",
+      "algorithm_family": "bagging",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.BaggingClassifier.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R27",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.dummy.DummyRegressor",
+      "class_name": "DummyRegressor",
+      "display_name_zh": "回归 · DummyRegressor",
+      "algorithm_family": "baseline",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyRegressor.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R28",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.ensembles.ConfigurableRegressor",
+      "class_name": "ConfigurableRegressor",
+      "display_name_zh": "回归 · VotingRegressor",
+      "algorithm_family": "voting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "",
+      "implementation_status": "available",
+      "raw_features": true
+    },
+    {
+      "id": "R29",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.ensembles.ConfigurableRegressor",
+      "class_name": "ConfigurableRegressor",
+      "display_name_zh": "回归 · StackingRegressor",
+      "algorithm_family": "stacking",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "",
+      "implementation_status": "available",
+      "raw_features": true,
+      "builder_defaults": {
+        "kind": "stacking"
+      }
+    },
+    {
+      "id": "R30",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.ensemble.BaggingRegressor",
+      "class_name": "BaggingRegressor",
+      "display_name_zh": "回归 · BaggingRegressor",
+      "algorithm_family": "bagging",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.BaggingRegressor.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R31",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.linear_model.BayesianRidge",
+      "class_name": "BayesianRidge",
+      "display_name_zh": "回归 · BayesianRidge",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.BayesianRidge.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R32",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.linear_model.ARDRegression",
+      "class_name": "ARDRegression",
+      "display_name_zh": "回归 · ARDRegression",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ARDRegression.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R33",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.kernel_ridge.KernelRidge",
+      "class_name": "KernelRidge",
+      "display_name_zh": "回归 · KernelRidge",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.kernel_ridge.KernelRidge.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R34",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.linear_model.RANSACRegressor",
+      "class_name": "RANSACRegressor",
+      "display_name_zh": "回归 · RANSACRegressor",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RANSACRegressor.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R35",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.linear_model.TheilSenRegressor",
+      "class_name": "TheilSenRegressor",
+      "display_name_zh": "回归 · TheilSenRegressor",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.TheilSenRegressor.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "R36",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "sklearn.cross_decomposition.PLSRegression",
+      "class_name": "PLSRegression",
+      "display_name_zh": "回归 · PLSRegression",
+      "algorithm_family": "regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "PLS components must fit training matrix dimensions",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.cross_decomposition.PLSRegression.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "K11",
+      "task": "clustering",
+      "task_label_zh": "聚类",
+      "implementation": "sklearn.mixture.GaussianMixture",
+      "class_name": "GaussianMixture",
+      "display_name_zh": "聚类 · GaussianMixture",
+      "algorithm_family": "mixture",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "Probabilistic cluster membership",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.mixture.GaussianMixture.html",
+      "implementation_status": "available",
+      "builder_defaults": {
+        "n_components": 3
+      }
+    },
+    {
+      "id": "K12",
+      "task": "clustering",
+      "task_label_zh": "聚类",
+      "implementation": "sklearn.mixture.BayesianGaussianMixture",
+      "class_name": "BayesianGaussianMixture",
+      "display_name_zh": "聚类 · BayesianGaussianMixture",
+      "algorithm_family": "mixture",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "Probabilistic cluster membership",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.mixture.BayesianGaussianMixture.html",
+      "implementation_status": "available",
+      "builder_defaults": {
+        "n_components": 3
+      }
+    },
+    {
+      "id": "K13",
+      "task": "clustering",
+      "task_label_zh": "聚类",
+      "implementation": "sklearn.cluster.HDBSCAN",
+      "class_name": "HDBSCAN",
+      "display_name_zh": "聚类 · HDBSCAN",
+      "algorithm_family": "density clustering",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "No native predict for new samples",
+      "official_api_url": "https://scikit-learn.org/stable/modules/generated/sklearn.cluster.HDBSCAN.html",
+      "implementation_status": "available"
+    },
+    {
+      "id": "D11",
+      "task": "dimensionality reduction",
+      "task_label_zh": "降维",
+      "implementation": "umap.umap_.UMAP",
+      "class_name": "UMAP",
+      "display_name_zh": "降维 · UMAP",
+      "algorithm_family": "manifold",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "",
+      "official_api_url": "https://umap-learn.readthedocs.io/en/latest/api.html",
+      "implementation_status": "available",
+      "optional_extra": "manifold",
+      "optional_module": "umap"
+    },
+    {
+      "id": "D12",
+      "task": "dimensionality reduction",
+      "task_label_zh": "降维",
+      "implementation": "pyml_workbench.autoencoder.Autoencoder",
+      "class_name": "Autoencoder",
+      "display_name_zh": "降维 · Autoencoder",
+      "algorithm_family": "autoencoder",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "CPU reconstruction training; transform returns bottleneck features",
+      "official_api_url": "https://docs.pytorch.org/docs/stable/nn.html",
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_module": "torch"
+    },
+    {
+      "id": "T01",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.forecast_models.ForecastRegressor",
+      "class_name": "ForecastRegressor",
+      "display_name_zh": "回归 · NaiveForecast",
+      "algorithm_family": "forecasting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Explicit chronological target history",
+      "key_limits": "Univariate fixed-origin forecasting; X supplies future row count, never target values. Chronological split required; one series per job.",
+      "official_api_url": "https://www.statsmodels.org/stable/tsa.html",
+      "implementation_status": "available",
+      "builder_defaults": {
+        "method": "naive"
+      }
+    },
+    {
+      "id": "T02",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.forecast_models.ForecastRegressor",
+      "class_name": "ForecastRegressor",
+      "display_name_zh": "回归 · SeasonalNaiveForecast",
+      "algorithm_family": "forecasting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Explicit chronological target history",
+      "key_limits": "Univariate fixed-origin forecasting; X supplies future row count, never target values. Chronological split required; one series per job.",
+      "official_api_url": "https://www.statsmodels.org/stable/tsa.html",
+      "implementation_status": "available",
+      "builder_defaults": {
+        "method": "seasonal_naive"
+      }
+    },
+    {
+      "id": "T03",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.forecast_models.ForecastRegressor",
+      "class_name": "ForecastRegressor",
+      "display_name_zh": "回归 · ExponentialSmoothing",
+      "algorithm_family": "forecasting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Explicit chronological target history",
+      "key_limits": "Univariate fixed-origin forecasting; X supplies future row count, never target values. Chronological split required; one series per job.",
+      "official_api_url": "https://www.statsmodels.org/stable/tsa.html",
+      "implementation_status": "available",
+      "optional_extra": "forecasting",
+      "optional_module": "statsmodels",
+      "builder_defaults": {
+        "method": "exponential"
+      }
+    },
+    {
+      "id": "T04",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.forecast_models.ForecastRegressor",
+      "class_name": "ForecastRegressor",
+      "display_name_zh": "回归 · ARIMA",
+      "algorithm_family": "forecasting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Explicit chronological target history",
+      "key_limits": "Univariate fixed-origin forecasting; X supplies future row count, never target values. Chronological split required; one series per job.",
+      "official_api_url": "https://www.statsmodels.org/stable/tsa.html",
+      "implementation_status": "available",
+      "optional_extra": "forecasting",
+      "optional_module": "statsmodels",
+      "builder_defaults": {
+        "method": "arima"
+      }
+    },
+    {
+      "id": "T05",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "pyml_workbench.forecast_models.ForecastRegressor",
+      "class_name": "ForecastRegressor",
+      "display_name_zh": "回归 · SARIMA",
+      "algorithm_family": "forecasting",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Explicit chronological target history",
+      "key_limits": "Univariate fixed-origin forecasting; X supplies future row count, never target values. Chronological split required; one series per job.",
+      "official_api_url": "https://www.statsmodels.org/stable/tsa.html",
+      "implementation_status": "available",
+      "optional_extra": "forecasting",
+      "optional_module": "statsmodels",
+      "builder_defaults": {
+        "method": "sarima"
+      }
+    },
+    {
+      "id": "N07",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "skorch.regressor.NeuralNetRegressor",
+      "class_name": "NeuralNetRegressor",
+      "display_name_zh": "回归 · 1D CNN",
+      "algorithm_family": "window neural regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "Fixed window and horizon; train-only preprocessing and validation early stopping",
+      "official_api_url": "https://docs.pytorch.org/docs/stable/nn.html",
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
+    },
+    {
+      "id": "N08",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "skorch.regressor.NeuralNetRegressor",
+      "class_name": "NeuralNetRegressor",
+      "display_name_zh": "回归 · TCN",
+      "algorithm_family": "window neural regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "Fixed window and horizon; train-only preprocessing and validation early stopping",
+      "official_api_url": "https://docs.pytorch.org/docs/stable/nn.html",
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
+    },
+    {
+      "id": "N09",
+      "task": "regression",
+      "task_label_zh": "回归",
+      "implementation": "skorch.regressor.NeuralNetRegressor",
+      "class_name": "NeuralNetRegressor",
+      "display_name_zh": "回归 · Transformer",
+      "algorithm_family": "window neural regression",
+      "new_data_ops": "runtime capability detection",
+      "sequence_hmm": "Tabular or registered window adapter",
+      "key_limits": "Fixed window and horizon; train-only preprocessing and validation early stopping",
+      "official_api_url": "https://docs.pytorch.org/docs/stable/nn.html",
+      "implementation_status": "available",
+      "optional_extra": "deep",
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
     }
   ],
   "deferred_models": [
@@ -1177,7 +1627,10 @@
       "official_api_url": "https://skorch.readthedocs.io/en/stable/classifier.html#skorch.classifier.NeuralNetClassifier; https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html",
       "implementation_status": "available",
       "optional_extra": "deep",
-      "optional_modules": ["torch", "skorch"]
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
     },
     {
       "id": "N02",
@@ -1193,7 +1646,10 @@
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html",
       "implementation_status": "available",
       "optional_extra": "deep",
-      "optional_modules": ["torch", "skorch"]
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
     },
     {
       "id": "N04",
@@ -1209,7 +1665,10 @@
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html",
       "implementation_status": "available",
       "optional_extra": "deep",
-      "optional_modules": ["torch", "skorch"]
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
     },
     {
       "id": "N06",
@@ -1225,7 +1684,10 @@
       "official_api_url": "https://skorch.readthedocs.io/en/stable/regressor.html#skorch.regressor.NeuralNetRegressor; https://docs.pytorch.org/docs/stable/generated/torch.nn.GRU.html",
       "implementation_status": "available",
       "optional_extra": "deep",
-      "optional_modules": ["torch", "skorch"]
+      "optional_modules": [
+        "torch",
+        "skorch"
+      ]
     }
   ]
 }

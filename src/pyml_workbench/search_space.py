@@ -178,4 +178,4 @@ def recommended_space(model_id):
         return SearchSpace.from_dict({"fields": {"alpha": {"type": "real", "low": .01, "high": 10., "log": True, "values": [.01, 1., 10.]}}})
     if "n_clusters" in params:
         return SearchSpace.from_dict({"fields": {"n_clusters": {"type": "integer", "low": 2, "high": 4, "values": [2, 3, 4]}}})
-    raise ValueError("No reviewed default search space for this model; provide a typed space")
+    return SearchSpace()  # A genuine fixed-default trial, without guessed parameter ranges.

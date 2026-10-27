@@ -51,9 +51,17 @@ from .config import DatasetConfig, ExperimentConfig, SplitConfig
 from .data import load_dataset
 from .history import HistoryStore
 from .objectives import ObjectiveSpec
+from .metrics import metric_direction
+from .config import EvaluationConfig
 from .search import SearchSpec
 from .runtime import worker_command
-from .run_timing import RunTiming, format_duration, summarize_batch_outcomes
+from .run_timing import (
+    ACTION_STAGE_LABELS,
+    RunTiming,
+    SearchTimingEstimator,
+    format_duration,
+    summarize_batch_outcomes,
+)
 from .search_space import SearchSpace, recommended_space
 from .selection import FrozenSelection
 from .sequence import SequenceConfig
@@ -80,6 +88,28 @@ _SESSION_ID_RE = re.compile(
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _KEEP_SAFE_INTERRUPTION = object()
+
+_SEARCH_EVENT_STAGES = {
+    "search_started": ("正在运行验证搜索", 60.0),
+    "proposal": ("正在生成并检查候选配置", 15.0),
+    "fit_started": ("正在拟合候选模型并计算验证指标", 60.0),
+    "fit_completed": ("正在更新搜索结果并准备后续候选", 15.0),
+    "cache_hit": ("正在处理已缓存的候选结果", 5.0),
+    "search_paused": ("搜索已暂停，等待恢复", 60.0),
+    "search_resumed": ("搜索已恢复，正在继续验证", 60.0),
+    "search_finished": ("该任务搜索已结束，正在整理队列结果", 5.0),
+}
+
+_SELECTION_EVENT_STAGES = {
+    "refit_started": ("正在使用训练与验证数据重拟合获胜模型", 60.0),
+    "preprocessor_fit_train_validation_only": ("正在拟合获胜模型", 60.0),
+    "estimator_fit_train_validation_only": ("正在计算重拟合指标", 20.0),
+    "refit_metrics_computed": ("正在保存获胜模型重拟合结果", 15.0),
+    "refit_completed": ("正在执行一次最终测试", 30.0),
+    "test_started": ("正在执行一次最终测试", 30.0),
+    "test_metrics_computed_once": ("正在保存最终测试结果", 15.0),
+    "test_completed": ("正在整理最终测试结果", 10.0),
+}
 
 
 def _nonnegative_worker_count(value: Any) -> bool:
@@ -108,6 +138,17 @@ class BatchSearchDialog(QDialog):
         self._worker_history_path: Path | None = None
         self._worker_started = False
         self._run_timing: RunTiming | None = None
+        self._run_timing_state = "running"
+        self._search_timing_estimator: SearchTimingEstimator | None = None
+        self._search_job_labels: dict[str, str] = {}
+        self._search_active_jobs: set[str] = set()
+        self._search_paused_jobs: set[str] = set()
+        self._search_job_states: dict[str, str] = {}
+        self._search_job_phases: dict[str, str] = {}
+        self._search_active_fit_tokens: dict[str, str] = {}
+        self._search_completed_fit_tokens: dict[str, set[str]] = {}
+        self._search_job_specs: list[dict[str, Any]] = []
+        self._search_parallel_workers = 1
         self._batch_outcome_state: str | None = None
         self._batch_outcome_counts: dict[str, int] | None = None
         self._log_failure_forwarded = False
@@ -298,7 +339,8 @@ class BatchSearchDialog(QDialog):
         root_layout.addWidget(self.status_label)
         self.start_time_label = QLabel("开始时间：—")
         self.elapsed_time_label = QLabel("已用时间：0 秒")
-        self.estimated_finish_label = QLabel("预计完成：待估算")
+        self.estimated_finish_label = QLabel("尚未启动后台任务；启动后显示当前阶段和初始用时参考。")
+        self.estimated_finish_label.setWordWrap(True)
         self.end_time_label = QLabel("实际结束时间：—")
         root_layout.addWidget(self.start_time_label)
         root_layout.addWidget(self.elapsed_time_label)
@@ -372,6 +414,9 @@ class BatchSearchDialog(QDialog):
             "models": models,
             "parameters": config.parameters,
             "seed": config.split.seed,
+            "split": config.to_dict()["split"],
+            "evaluation": config.to_dict().get("evaluation"),
+            "reference_labels_column": config.dataset.reference_labels_column,
             "sequence": config.sequence.to_dict() if config.sequence is not None else None,
         }
         self.datasets_edit.setPlainText(json.dumps([row], ensure_ascii=False, indent=2))
@@ -511,8 +556,13 @@ class BatchSearchDialog(QDialog):
                 sheet_name=row.get("sheet_name"),
                 target_column=row.get("target_column"),
                 feature_columns=tuple(features) if features is not None else None,
+                reference_labels_column=row.get("reference_labels_column"),
             )
-            split = SplitConfig(seed=int(row.get("seed", 42)))
+            split_options = dict(row.get("split") or {})
+            split_options.setdefault("seed", int(row.get("seed", 42)))
+            if all(str(model).startswith("T") for model in row["models"]):
+                split_options.setdefault("strategy", "time")
+            split = SplitConfig(**split_options)
             objective = ObjectiveSpec.from_dict(row.get("objective"))
             for model_id in row["models"]:
                 model_status = availability.get(model_id)
@@ -538,6 +588,7 @@ class BatchSearchDialog(QDialog):
                     split=split,
                     output_dir=None,
                     sequence=SequenceConfig.from_dict(row["sequence"]) if row.get("sequence") is not None else None,
+                    evaluation=EvaluationConfig(**row["evaluation"]) if row.get("evaluation") is not None else None,
                 )
                 spec = SearchSpec(
                     method=method,
@@ -560,7 +611,9 @@ class BatchSearchDialog(QDialog):
             max_total_fits = combinations * per_combo_fits
             max_total_proposals = combinations * self.max_proposals_spin.value()
             parallel = self.parallel_spin.value()
-            max_wall_minutes = combinations * self.minutes_spin.value() / parallel
+            active_workers = min(parallel, combinations) if combinations else 0
+            waves = math.ceil(combinations / active_workers) if active_workers else 0
+            max_wall_minutes = waves * self.minutes_spin.value()
             unavailable = []
             for row_number, row in enumerate(rows, 1):
                 for model_id in row["models"]:
@@ -575,8 +628,9 @@ class BatchSearchDialog(QDialog):
             self.preview_label.setText(
                 f"{len(rows)} 份独立数据配置 × 共 {combinations} 个兼容模型组合；"
                 f"最多 {max_total_fits} 次真实搜索拟合、{max_total_proposals} 个 proposals，"
-                f"活动时长上限约 {max_wall_minutes:.1f} worker 分钟（每组合 {self.minutes_spin.value()} 分钟，"
-                f"最多 {parallel} 个并行 worker）。Grid/TPE/随机/遗传/退火均使用同一类型化空间。"
+                f"按 {active_workers} 个实际并行 worker、{waves} 波计算，队列活动时长预算参考约 {max_wall_minutes:.1f} 分钟"
+                f"（每组合 {self.minutes_spin.value()} 分钟）。时限只在拟合间检查，当前 fit 可能越过预算；这不是硬性结束时间。"
+                f"Grid/TPE/随机/遗传/退火均使用同一类型化空间。"
                 f"{availability_note}"
             )
         except Exception as exc:
@@ -619,10 +673,116 @@ class BatchSearchDialog(QDialog):
                 "--parallel-workers", str(self.parallel_spin.value()),
             ],
             action="batch-run-request",
+            search_jobs=[
+                {
+                    "job_id": f"request-{index}",
+                    "model_id": config.model_id,
+                    "task": config.task,
+                    "spec": spec.to_dict(),
+                    "status": "queued",
+                }
+                for index, (config, spec) in enumerate(requests)
+            ],
+            parallel_workers=self.parallel_spin.value(),
         )
         return True
 
-    def _start_worker(self, arguments: list[str], *, action: str) -> None:
+    def _configure_search_timing(
+        self,
+        jobs: list[dict[str, Any]],
+        *,
+        parallel_workers: int,
+    ) -> None:
+        estimator = SearchTimingEstimator(parallel_workers=parallel_workers)
+        labels: dict[str, str] = {}
+        active: set[str] = set()
+        paused: set[str] = set()
+        states: dict[str, str] = {}
+        phases: dict[str, str] = {}
+        for index, item in enumerate(jobs):
+            if not isinstance(item, dict):
+                continue
+            job_id = str(item.get("job_id") or "")
+            if not job_id:
+                continue
+            model_label = str(item.get("model_id") or item.get("task") or job_id)
+            labels[job_id] = model_label
+            spec = item.get("spec")
+            if not isinstance(spec, dict) and index < len(self._search_job_specs):
+                spec = self._search_job_specs[index]
+            if isinstance(spec, dict):
+                try:
+                    estimator.configure_job(
+                        job_id,
+                        spec,
+                        model_label=model_label,
+                        elapsed_seconds=float(item.get("elapsed_seconds", 0.0)),
+                        actual_fit_count=int(item.get("actual_fit_count", 0)),
+                        proposal_count=int(item.get("proposal_count", 0)),
+                        status=str(item.get("status") or "queued"),
+                    )
+                except (TypeError, ValueError, OverflowError) as exc:
+                    fallback = (
+                        self._search_job_specs[index]
+                        if index < len(self._search_job_specs)
+                        else None
+                    )
+                    if isinstance(fallback, dict) and fallback is not spec:
+                        try:
+                            estimator.configure_job(
+                                job_id,
+                                fallback,
+                                model_label=model_label,
+                                elapsed_seconds=float(item.get("elapsed_seconds", 0.0)),
+                                actual_fit_count=int(item.get("actual_fit_count", 0)),
+                                proposal_count=int(item.get("proposal_count", 0)),
+                                status=str(item.get("status") or "queued"),
+                            )
+                        except (TypeError, ValueError, OverflowError):
+                            self._append_log(
+                                f"搜索任务 {job_id} 的预算元数据不可用，后续使用初始估时参考：{exc}"
+                            )
+                    else:
+                        self._append_log(
+                            f"搜索任务 {job_id} 的预算元数据不可用，后续使用初始估时参考：{exc}"
+                        )
+            status = str(item.get("status") or "queued")
+            status = status if status in {"queued", "running", "pausing", "paused", "completed", "failed", "cancelled"} else "queued"
+            states[job_id] = "finished" if status in {"completed", "failed", "cancelled"} else status
+            phases[job_id] = "正在运行验证搜索" if status == "running" else "等待搜索任务启动"
+            if status in {"running", "pausing", "paused"}:
+                active.add(job_id)
+            if status == "paused":
+                paused.add(job_id)
+        self._search_timing_estimator = estimator
+        self._search_job_labels = labels
+        self._search_active_jobs = active
+        self._search_paused_jobs = paused
+        self._search_job_states = states
+        self._search_job_phases = phases
+        self._search_active_fit_tokens.clear()
+        self._search_completed_fit_tokens = {job_id: set() for job_id in states}
+        self._search_parallel_workers = max(1, parallel_workers)
+        self._sync_search_pause_clock()
+
+    def _sync_search_pause_clock(self) -> None:
+        timing = self._run_timing
+        if timing is None:
+            return
+        pending = [state for state in self._search_job_states.values() if state != "finished"]
+        if pending and all(state == "paused" for state in pending):
+            timing.pause()
+        else:
+            timing.resume()
+
+    def _start_worker(
+        self,
+        arguments: list[str],
+        *,
+        action: str,
+        search_jobs: list[dict[str, Any]] | None = None,
+        parallel_workers: int = 1,
+    ) -> None:
         self._worker_action = action
         self._worker_started = False
         self._worker_history_path = None
@@ -638,6 +798,27 @@ class BatchSearchDialog(QDialog):
                 self._worker_job_id = arguments[job_index + 1]
             except (ValueError, IndexError):
                 pass
+        if action in {"batch-run-request", "batch-run"}:
+            initial_jobs = search_jobs or []
+            self._search_job_specs = [
+                dict(item["spec"])
+                for item in initial_jobs
+                if isinstance(item, dict) and isinstance(item.get("spec"), dict)
+            ]
+            self._configure_search_timing(
+                initial_jobs,
+                parallel_workers=parallel_workers,
+            )
+        else:
+            self._search_timing_estimator = None
+            self._search_job_labels.clear()
+            self._search_active_jobs.clear()
+            self._search_paused_jobs.clear()
+            self._search_job_states.clear()
+            self._search_job_phases.clear()
+            self._search_active_fit_tokens.clear()
+            self._search_completed_fit_tokens.clear()
+            self._search_job_specs = []
         self._stdout_buffer = b""
         self._stderr_text = ""
         self._stderr_decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -648,9 +829,23 @@ class BatchSearchDialog(QDialog):
         self._log_failure_forwarded = False
         self.copy_error_button.setEnabled(False)
         self._run_timing = RunTiming(action)
+        self._run_timing_state = "running"
         self.start_time_label.setText("开始时间：等待后台进程启动")
         self.elapsed_time_label.setText("已用时间：0 秒")
-        self.estimated_finish_label.setText("预计完成：待估算；搜索总时长尚无可靠总体进度依据。")
+        self.status_label.setText(self._run_timing.stage_label)
+        initial_estimate = self._run_timing.remaining_seconds
+        estimate_basis = self._run_timing.estimate_basis
+        if self._search_timing_estimator is not None:
+            initial_estimate = self._search_timing_estimator.remaining_seconds()
+            estimate_basis = self._search_timing_estimator.estimate_basis
+        caption = (
+            "预计队列搜索完成"
+            if action in {"batch-run-request", "batch-run"}
+            else "预计当前阶段完成"
+        )
+        self.estimated_finish_label.setText(
+            f"{caption}：约 {format_duration(initial_estimate)}；{estimate_basis}，仅供参考（等待后台启动）。"
+        )
         self.end_time_label.setText("实际结束时间：—")
         self._run_timer.start()
         environment = QProcessEnvironment.systemEnvironment()
@@ -689,12 +884,111 @@ class BatchSearchDialog(QDialog):
             except Exception:
                 pass
 
+    def _search_pause_counts(self) -> tuple[int, int, int, int]:
+        pending = [
+            state for state in self._search_job_states.values()
+            if state != "finished"
+        ]
+        paused = sum(state == "paused" for state in pending)
+        running = sum(state == "running" for state in pending)
+        pausing = sum(state == "pausing" for state in pending)
+        queued = sum(state == "queued" for state in pending)
+        return paused, running, pausing, queued
+
+    def _update_search_stage_summary(self) -> None:
+        timing = self._run_timing
+        if timing is None or timing.ended_monotonic is not None or self._search_timing_estimator is None:
+            return
+        pending_ids = [
+            job_id for job_id, state in self._search_job_states.items()
+            if state != "finished"
+        ]
+        paused, running, pausing, queued = self._search_pause_counts()
+        if not pending_ids:
+            label, estimate = "搜索任务已结束，正在保存队列摘要", 5.0
+        elif paused and not running and not pausing and not queued:
+            label = f"搜索队列已暂停，{paused} 个任务等待恢复"
+            estimate = 60.0
+        else:
+            fitting = [
+                self._search_job_labels.get(job_id, job_id)
+                for job_id in pending_ids
+                if self._search_job_states.get(job_id) in {"running", "pausing"}
+                and job_id in self._search_active_fit_tokens
+            ]
+            if fitting:
+                shown = "、".join(fitting[:2])
+                if len(fitting) > 2:
+                    shown += f"等 {len(fitting)} 个任务"
+                label, estimate = f"正在拟合：{shown}", 60.0
+            else:
+                phases = []
+                for job_id in pending_ids:
+                    if self._search_job_states.get(job_id) not in {"running", "pausing"}:
+                        continue
+                    phase = self._search_job_phases.get(job_id, "正在运行验证搜索")
+                    if phase not in phases:
+                        phases.append(phase)
+                if phases:
+                    label = "；".join(phases[:2])
+                    if len(phases) > 2:
+                        label += f"；另有 {len(phases) - 2} 个阶段"
+                else:
+                    label = "正在等待搜索任务开始"
+                estimate = 15.0 if running or pausing else 60.0
+            if paused:
+                label += f"；另有 {paused} 个任务暂停"
+            if pausing:
+                label += f"；{pausing} 个任务正在等待安全点暂停"
+            if queued:
+                label += f"；{queued} 个任务排队中"
+        if timing.stage_label != label:
+            timing.set_stage(label, estimate)
+        if self.status_label.text() != label:
+            self.status_label.setText(label)
+
     def _update_run_timing(self) -> None:
         timing = self._run_timing
         if timing is None:
             return
+        if timing.ended_monotonic is not None:
+            state_label = {"success": "成功", "failed": "失败", "cancelled": "已取消"}.get(
+                self._run_timing_state, self._run_timing_state
+            )
+            if timing.started_local is not None:
+                self.start_time_label.setText(f"开始时间：{timing.started_local:%Y-%m-%d %H:%M:%S}")
+            self.elapsed_time_label.setText(f"已用时间：{format_duration(timing.elapsed_seconds)}")
+            self.estimated_finish_label.setText(f"预计完成：任务已结束（{state_label}）。")
+            if timing.ended_local is not None:
+                self.end_time_label.setText(
+                    f"实际结束时间：{timing.ended_local:%Y-%m-%d %H:%M:%S}（{state_label}）"
+                )
+            return
+        estimator = self._search_timing_estimator
+        if estimator is not None:
+            self._update_search_stage_summary()
+            timing.set_remaining_estimate(
+                estimator.remaining_seconds(),
+                basis=estimator.estimate_basis,
+                exceeded=estimator.reference_exceeded,
+            )
+            paused, running, pausing, queued = self._search_pause_counts()
+            pending = paused + running + pausing + queued
+            if pending and paused == pending:
+                timing.pause()
+            else:
+                timing.resume()
         if timing.started_local is None:
             self.start_time_label.setText("开始时间：等待后台进程启动")
+            caption = (
+                "预计队列搜索完成"
+                if timing.action in {"batch-run-request", "batch-run"}
+                else "预计当前阶段完成"
+            )
+            self.estimated_finish_label.setText(
+                f"{caption}：约 {format_duration(timing.remaining_seconds)}；"
+                f"{timing.estimate_basis}，仅供参考（等待后台启动）。"
+            )
             return
         self.start_time_label.setText(
             f"开始时间：{timing.started_local:%Y-%m-%d %H:%M:%S}"
@@ -702,8 +996,30 @@ class BatchSearchDialog(QDialog):
         self.elapsed_time_label.setText(
             f"已用时间：{format_duration(timing.elapsed_seconds)}"
         )
+        caption = (
+            "预计队列搜索完成"
+            if timing.action in {"batch-run-request", "batch-run"}
+            else "预计当前阶段完成"
+        )
+        remaining = timing.remaining_seconds
+        suffix = "；已超过当前参考，剩余时间仍随运行滚动估算" if timing.reference_exceeded else ""
+        paused, running, pausing, queued = self._search_pause_counts() if estimator is not None else (0, 0, 0, 0)
+        if estimator is not None and paused and running + pausing + queued:
+            estimate = (
+                f"{caption}：恢复暂停任务后约剩 {format_duration(remaining)} 活动用时；"
+                f"当前 {paused} 个任务暂停，完成时刻随恢复时间变化"
+            )
+        elif timing.is_paused:
+            estimate = f"{caption}：当前已暂停，恢复后约剩 {format_duration(remaining)}"
+        elif timing.expected_finish_local is not None:
+            estimate = (
+                f"{caption}：约 {timing.expected_finish_local:%Y-%m-%d %H:%M:%S}；"
+                f"约剩 {format_duration(remaining)}"
+            )
+        else:
+            estimate = f"{caption}：约剩 {format_duration(remaining)}"
         self.estimated_finish_label.setText(
-            "预计完成：待估算；批量任务当前没有可靠的整体剩余工作量。"
+            f"{estimate}；{timing.estimate_basis}{suffix}，仅供参考。"
         )
 
     def _finish_run_timing(self, state: str) -> None:
@@ -711,10 +1027,19 @@ class BatchSearchDialog(QDialog):
         if timing is None or timing.ended_monotonic is not None:
             return
         ended_local, elapsed = timing.finish()
+        self._run_timing_state = state
         self._run_timer.stop()
         state_label = {"success": "成功", "failed": "失败", "cancelled": "已取消"}.get(state, state)
         self._update_run_timing()
         self.estimated_finish_label.setText(f"预计完成：任务已结束（{state_label}）。")
+        terminal_status = f"后台动作已结束（{state_label}）。"
+        if self._batch_outcome_counts is not None:
+            counts = self._batch_outcome_counts
+            terminal_status += (
+                f" 队列结果：{counts['completed']} 个完成，{counts['failed']} 个失败，"
+                f"{counts['cancelled']} 个取消，{counts['unknown']} 个未知。"
+            )
+        self.status_label.setText(terminal_status)
         self.end_time_label.setText(
             f"实际结束时间：{ended_local:%Y-%m-%d %H:%M:%S}（{state_label}）"
         )
@@ -891,6 +1216,26 @@ class BatchSearchDialog(QDialog):
             ):
                 self._append_log("无法解析 worker 输出：progress.elapsed_seconds 必须是有限的非负数。")
                 return
+            if (
+                self._worker_action in {"batch-run-request", "batch-run"}
+                and payload.get("name") == "search_started"
+            ):
+                resume_timing = progress_data.get("resume_timing")
+                invalid_resume = resume_timing is not None and (
+                    not isinstance(resume_timing, dict)
+                    or any(
+                        type(resume_timing.get(field)) is not int or resume_timing[field] < 0
+                        for field in ("completed_fit_count", "fit_duration_count")
+                    )
+                    or not _nonnegative_worker_duration(resume_timing.get("fit_duration_total"))
+                )
+                if invalid_resume or not isinstance(progress_data.get("spec"), dict):
+                    self._append_log(
+                        "无法读取搜索估时历史或预算，后续显示初始估时参考。"
+                    )
+                    self._search_timing_estimator = None
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(self._run_timing.stage_label, 60.0)
         elif kind == "error":
             if not isinstance(payload.get("error_type"), str) or not isinstance(payload.get("message"), str):
                 self._append_log("无法解析 worker 输出：error 消息缺少有效类型或说明。")
@@ -906,9 +1251,10 @@ class BatchSearchDialog(QDialog):
                     not isinstance(item, dict)
                     or not isinstance(item.get("job_id"), str)
                     or not item["job_id"]
+                    or ("spec" in item and not isinstance(item["spec"], dict))
                     for item in jobs
                 ):
-                    self._append_log("无法解析 worker 输出：queued.jobs 格式无效。")
+                    self._append_log("无法解析 worker 输出：queued.jobs/spec 格式无效。")
                     return
             elif phase == "finished":
                 outcomes = payload.get("outcomes")
@@ -1003,8 +1349,101 @@ class BatchSearchDialog(QDialog):
             proposal_count = data.get("proposal_count")
             elapsed = data.get("elapsed_seconds")
             extra = f" · fit {fit_count} · proposals {proposal_count} · {float(elapsed):.1f}s" if fit_count is not None else ""
-            self.status_label.setText(f"{job_id or ''} {name}{extra}".strip())
+            if job_id and self._search_timing_estimator is not None:
+                try:
+                    self._search_timing_estimator.update_event(payload)
+                except (TypeError, ValueError, OverflowError, KeyError) as exc:
+                    self._append_log(
+                        f"无法根据搜索消息更新剩余时间，使用初始估时参考：{exc}"
+                    )
+                    self._search_timing_estimator = None
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(self._run_timing.stage_label, 60.0)
+            if job_id and self._worker_action in {"batch-run-request", "batch-run"}:
+                label = self._search_job_labels.get(job_id, str(job_id))
+                record = data.get("record") if isinstance(data.get("record"), dict) else {}
+                token = str(
+                    record.get("trial_id")
+                    or payload.get("trial_id")
+                    or data.get("actual_fit_count", "")
+                )
+                active_token = self._search_active_fit_tokens.get(job_id)
+                completed_tokens = self._search_completed_fit_tokens.setdefault(job_id, set())
+                stale_completion = bool(
+                    name == "fit_completed"
+                    and token
+                    and (token in completed_tokens or (active_token and active_token != token))
+                )
+                if name == "search_started":
+                    self._search_active_jobs.add(job_id)
+                    self._search_paused_jobs.discard(job_id)
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在运行验证搜索"
+                    self._search_active_fit_tokens.pop(job_id, None)
+                elif name == "search_paused":
+                    self._search_active_jobs.add(job_id)
+                    self._search_paused_jobs.add(job_id)
+                    self._search_job_states[job_id] = "paused"
+                    self._search_job_phases[job_id] = "等待恢复"
+                    self._search_active_fit_tokens.pop(job_id, None)
+                elif name == "search_resumed":
+                    self._search_active_jobs.add(job_id)
+                    self._search_paused_jobs.discard(job_id)
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在继续验证搜索"
+                elif name == "search_finished":
+                    self._search_active_jobs.discard(job_id)
+                    self._search_paused_jobs.discard(job_id)
+                    self._search_job_states[job_id] = "finished"
+                    self._search_job_phases[job_id] = "搜索任务已结束"
+                    self._search_active_fit_tokens.pop(job_id, None)
+                elif name == "fit_started":
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在拟合候选模型并计算验证指标"
+                    self._search_active_fit_tokens[job_id] = token
+                elif name == "fit_completed" and not stale_completion:
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在更新搜索结果并准备后续候选"
+                    if token:
+                        completed_tokens.add(token)
+                    if not active_token or active_token == token:
+                        self._search_active_fit_tokens.pop(job_id, None)
+                elif name == "proposal":
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在生成并检查候选配置"
+                elif name == "cache_hit":
+                    self._search_job_states[job_id] = "running"
+                    self._search_job_phases[job_id] = "正在整理已缓存的候选结果"
+                stage = _SEARCH_EVENT_STAGES.get(name)
+                current = (
+                    f"{label} · {stage[0]}" if stage is not None
+                    else f"{label} · 正在处理 {name}"
+                )
+                if self._run_timing is not None and name in _SEARCH_EVENT_STAGES:
+                    self._run_timing.set_stage(current, _SEARCH_EVENT_STAGES[name][1])
+                self.status_label.setText(current)
+            elif job_id and self._worker_action == "batch-finalize":
+                stage = _SELECTION_EVENT_STAGES.get(name)
+                if stage is not None:
+                    current, stage_seconds = stage
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(current, stage_seconds)
+                else:
+                    current = f"正在处理最终选择阶段：{name}"
+                self.status_label.setText(current)
+            elif self._worker_action == "batch-finalize":
+                stage = _SELECTION_EVENT_STAGES.get(name)
+                if stage is not None:
+                    current, stage_seconds = stage
+                    if self._run_timing is not None:
+                        self._run_timing.set_stage(current, stage_seconds)
+                    self.status_label.setText(current)
+                else:
+                    self.status_label.setText(f"正在处理最终选择阶段：{name}")
+            else:
+                self.status_label.setText(f"{job_id or ''} {name}{extra}".strip())
             self._append_log(f"{job_id or ''} {name}{extra}".strip())
+            self._update_run_timing()
             if job_id and job_id not in self._job_ids:
                 self._job_ids.append(job_id)
             self.refresh_history()
@@ -1013,7 +1452,15 @@ class BatchSearchDialog(QDialog):
             phase = payload.get("phase")
             if phase == "queued":
                 self._job_ids = [str(item["job_id"]) for item in payload.get("jobs", [])]
-                self.status_label.setText(f"已预检并入队 {len(self._job_ids)} 个模型/数据组合，搜索在后台运行。")
+                self._configure_search_timing(
+                    payload.get("jobs", []),
+                    parallel_workers=self._search_parallel_workers,
+                )
+                label = f"预检完成；正在运行 {len(self._job_ids)} 个搜索任务"
+                self.status_label.setText(label)
+                if self._run_timing is not None:
+                    self._run_timing.set_stage(label, 60.0)
+                self._update_run_timing()
                 self.refresh_history()
             elif phase == "finished":
                 outcomes = payload.get("outcomes", [])
@@ -1182,7 +1629,7 @@ class BatchSearchDialog(QDialog):
         dataset = config.get("dataset", {})
         objective = search_spec.get("objective", {})
         metric = objective.get("metric")
-        direction = objective.get("direction") or ("min" if metric == "rmse" else "max")
+        direction = objective.get("direction") or metric_direction(str(job.get("task")), str(metric))
         score_split = objective.get("split") or "validation"
         columns = {
             "features": snapshot.get("feature_columns", dataset.get("feature_columns")),
@@ -1197,6 +1644,8 @@ class BatchSearchDialog(QDialog):
             "split_sha256": snapshot.get("split_sha256") or split_record.get("split_sha256"),
             "split_seed": split_record.get("seed", config.get("split", {}).get("seed")),
             "task": job.get("task"),
+            "evaluation": config.get("evaluation"),
+            "split_strategy": config.get("split", {}).get("strategy", "random"),
             "columns": columns,
             "objective": objective,
             "metric": metric,
@@ -1238,7 +1687,7 @@ class BatchSearchDialog(QDialog):
             label, key, group = self._comparison_group(job)
             search_spec = json.loads(job["search_json"] or "{}")
             objective = search_spec.get("objective", {})
-            direction = objective.get("direction") or ("min" if objective.get("metric") == "rmse" else "max")
+            direction = objective.get("direction") or metric_direction(str(job.get("task")), str(objective.get("metric")))
             score_split = objective.get("split", "validation")
             trial_rows = store.list_trials(job["job_id"])
             scored = [
@@ -1366,7 +1815,7 @@ class BatchSearchDialog(QDialog):
 
         search_spec = json.loads(job.get("search_json") or "{}")
         objective = search_spec.get("objective", {})
-        direction = objective.get("direction") or ("min" if objective.get("metric") == "rmse" else "max")
+        direction = objective.get("direction") or metric_direction(str(job.get("task")), str(objective.get("metric")))
         scored = [
             (trial, _finite_objective_score(trial.get("objective_value")))
             for trial in trials
@@ -1488,6 +1937,19 @@ class BatchSearchDialog(QDialog):
                 self._start_worker(
                     ["batch-run", "--history", str(history), "--job-id", job_id, "--parallel-workers", "1"],
                     action="batch-run",
+                    search_jobs=[
+                        {
+                            "job_id": job_id,
+                            "model_id": job.get("model_id"),
+                            "task": job.get("task"),
+                            "spec": json.loads(job.get("search_json") or "{}"),
+                            "status": "queued",
+                            "elapsed_seconds": job.get("elapsed_seconds", 0.0),
+                            "actual_fit_count": job.get("actual_fit_count", 0),
+                            "proposal_count": job.get("proposal_count", 0),
+                        }
+                    ],
+                    parallel_workers=1,
                 )
             else:
                 self.status_label.setText(f"已向 {job_id} 保存 {action} 请求。")
@@ -1556,7 +2018,7 @@ class BatchSearchDialog(QDialog):
                 config = json.loads(job["config_json"] or "{}")
                 spec = json.loads(job["search_json"] or "{}")
                 objective = spec.get("objective", {})
-                direction = objective.get("direction") or ("min" if objective.get("metric") == "rmse" else "max")
+                direction = objective.get("direction") or metric_direction(str(job.get("task")), str(objective.get("metric")))
                 score_split = objective.get("split", "validation")
                 group_label, group_key, group = self._comparison_group(job)
                 trials = [

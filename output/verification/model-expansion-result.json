@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-27",
+  "scope": "source and non-editable installed Python package; existing EXE not rebuilt",
+  "models": {
+    "total": 111,
+    "new": 27,
+    "base": 90
+  },
+  "unit_tests": {
+    "count": 31,
+    "result": "OK",
+    "command": ".venv/Scripts/python.exe -X utf8 -m unittest discover -s tests -v",
+    "log": ".property-tests/20261027T031602Z-metrics-model-expansion-final.log"
+  },
+  "metric_reference": {
+    "oracle": "scikit-learn 1.9.1",
+    "seed": 20261027,
+    "domains": [
+      "binary",
+      "multiclass",
+      "missing class",
+      "decision margins",
+      "reversed class order",
+      "nonnegative/log domain",
+      "zero denominator",
+      "numeric deep labels"
+    ]
+  },
+  "examples": {
+    "synthetic_classification.py": "OK",
+    "synthetic_dimensionality_reduction.py": "OK",
+    "synthetic_batch.py": "OK",
+    "synthetic_extended.py": "OK"
+  },
+  "gui_checks": [
+    "configuration roundtrip",
+    "expanded metric/model choices",
+    "batch configuration",
+    "CJK offscreen render"
+  ],
+  "additional_checks": [
+    "base import stays lazy",
+    "installed implementation and guide byte match",
+    "wheel and sdist build",
+    "wheel new modules/catalog/guide byte match",
+    "compileall",
+    "git diff --check",
+    "sdist version record matches current source"
+  ],
+  "screenshot": "output/verification/model-expansion-ui.png",
+  "packages": {
+    ".gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "pyml_workbench-0.4.4-py3-none-any.whl": "c3e2bd0f77851052b54de3e253abf15fcab2c27af05cafbcdbc1627f98da6df7",
+    "pyml_workbench-0.4.4.tar.gz": "103b0540d19546a0d1385560497c779087f0164a76b37d1cadf8bf06a0ec23a6"
+  },
+  "limitations": [
+    "No new EXE build",
+    "Forecast adapters are fixed-origin univariate, one sequence per job",
+    "Neural sequence models use SequencePlan holdout/early stopping rather than ordinary tabular CV",
+    "HDBSCAN has no native heldout predict",
+    "Seeded tests and synthetic examples do not establish predictive quality or prove correctness"
+  ]
+}

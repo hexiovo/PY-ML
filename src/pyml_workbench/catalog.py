@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-_EXTENDED_MODEL_IDS = frozenset({"H01", "H02", "H03", "N01", "N02", "N04", "N06"})
+_EXTENDED_MODEL_IDS = frozenset({"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"})
 _LABEL_ENCODED_CLASSIFIERS = frozenset({"C25"})
 _CATBOOST_MODEL_IDS = frozenset({"C27", "R26"})
 _CATBOOST_PARAMETER_ALIASES = {
@@ -142,6 +142,8 @@ def build_estimator(model_id: str, parameters: dict[str, Any] | None = None, *, 
 
         estimator = LabelEncodedClassifier(estimator)
     requested = dict(parameters or {})
+    if model_id.startswith("T") and requested.get("method", spec.get("builder_defaults", {}).get("method")) != spec.get("builder_defaults", {}).get("method"):
+        raise ValueError("Choose T01–T05 to select the forecast method; method cannot change a model's identity")
     if model_id in _CATBOOST_MODEL_IDS:
         requested = _normalize_catboost_parameters(requested)
         valid_names = set(estimator_parameter_names(model_id, estimator))

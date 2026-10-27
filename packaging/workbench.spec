@@ -41,10 +41,24 @@ for package in ['pyml-workbench', *profile['runtime_distributions']]:
     datas += copy_metadata(package)
 a = Analysis([str(root / 'packaging/desktop_entry.py'), str(root / 'packaging/worker_entry.py')],
     pathex=[str(root / 'src')], binaries=[], datas=datas, hiddenimports=hidden,
-    hookspath=[], hooksconfig={'matplotlib': {'backends': ['QtAgg', 'Agg', 'svg']}},
+    hookspath=[str(root / 'packaging/hooks')], hooksconfig={'matplotlib': {'backends': ['QtAgg', 'Agg', 'svg']}},
     runtime_hooks=[str(root / 'packaging/runtime_hook.py')],
     excludes=['tkinter', 'IPython', 'notebook', 'pytest', 'sphinx', *profile['exclude_modules']],
     noarchive=False)
+# Keep frozen application bytecode tied to this checkout. This is the same
+# source-provenance fix already present on origin/master (64f4a9f).
+from PyInstaller.config import CONF
+project_code_cache = CONF['code_cache'].setdefault(id(a.pure), {})
+for module_name, source_path, typecode in a.pure:
+    if module_name == 'pyml_workbench' or module_name.startswith('pyml_workbench.'):
+        if source_path in {'-', None}:
+            continue
+        source_file = Path(source_path).resolve()
+        assert source_file.is_relative_to((root / 'src').resolve()), source_file
+        project_code_cache[module_name] = compile(
+            source_file.read_bytes(), str(source_file), 'exec',
+            dont_inherit=True, optimize=0,
+        )
 pyz = PYZ(a.pure)
 gui_scripts = [entry for entry in a.scripts if entry[0] != 'worker_entry']
 worker_scripts = [entry for entry in a.scripts if entry[0] not in {'desktop_entry', 'pyi_rth_pyside6'}]

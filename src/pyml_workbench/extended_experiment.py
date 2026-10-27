@@ -26,6 +26,8 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from .config import ExperimentConfig
 from .data import DatasetError
+from .metrics import probability_cache
+
 from .experiment import (
     DatasetSnapshot,
     ExperimentError,
@@ -310,7 +312,7 @@ def prepare_extended_experiment(
                 selected_epochs=selected_epochs,
             )
             training_curves = estimator._pyml_training_curves
-            metrics, rows = _deep_refit_outputs(estimator, config.model_id, train_x, train_y)
+            metrics, rows = _deep_refit_outputs(estimator, config.model_id, train_x, train_y, plan=sequence_plan)
             provenance = _json_copy(dict(refit_provenance))
         preprocessing["input_protocol"] = "float32 (batch, window, features) windows"
     else:
@@ -556,7 +558,7 @@ def evaluate_extended_test(session: ExtendedExperimentSession) -> ExtendedTestCo
         y_true = _regression_targets(partition.window_targets.reshape(-1), context="test")
         prediction = predict_deep(session.fitted_model.estimator, model_id, x).reshape(-1)
         actual = y_true.reshape(-1)
-        metrics = _regression_metrics(actual, prediction)
+        metrics = _window_regression_metrics(actual, prediction, session.sequence_plan, include_validation=session.fit_scope == "train_validation")
         rows = _window_rows(session, partition, actual, prediction)
         return ExtendedTestComputation(metrics=metrics, rows=rows)
 
@@ -574,7 +576,7 @@ def evaluate_extended_test(session: ExtendedExperimentSession) -> ExtendedTestCo
             class_count=len(session.fitted_model.class_mapping or []),
         )
         predicted_ids = np.argmax(logits, axis=1)
-        metrics = _classification_metrics(y_true_ids, predicted_ids)
+        metrics = _deep_classification_metrics(y_true_ids, predicted_ids, logits, session.fitted_model.class_mapping)
         y_true = _decode_labels(y_true_ids, session.fitted_model.class_mapping)
         y_pred = _decode_labels(predicted_ids, session.fitted_model.class_mapping)
         rows = _result_rows("test", test_rows, session.features.index[test_rows], y_true, y_pred)
@@ -981,7 +983,7 @@ def _deep_table_train_validation_outputs(estimator, model_id, features, target, 
             actual = _encode_labels(target.iloc[positions], class_mapping, context=name)
             logits = predict_deep(estimator, model_id, x, class_count=len(class_mapping or []))
             predicted = np.argmax(logits, axis=1)
-            metrics[name] = _classification_metrics(actual, predicted)
+            metrics[name] = _deep_classification_metrics(actual, predicted, logits, class_mapping)
             rows.extend(_result_rows(name, positions, features.index[positions], _decode_labels(actual, class_mapping), _decode_labels(predicted, class_mapping)))
         else:
             actual = _regression_targets(target.iloc[positions], context=name).reshape(-1)
@@ -999,20 +1001,20 @@ def _deep_train_validation_outputs(estimator, model_id, plan, features, preproce
         x, y = _window_arrays(partition, preprocessor, list(plan.feature_columns), name=name)
         prediction = predict_deep(estimator, model_id, x).reshape(-1)
         actual = y.reshape(-1)
-        metrics["refit" if fit_scope == "train_validation" else name] = _regression_metrics(actual, prediction)
+        metrics["refit" if fit_scope == "train_validation" else name] = _window_regression_metrics(actual, prediction, plan, include_validation=fit_scope == "train_validation")
         rows.extend(_window_rows_for_plan(plan, partition, features, actual, prediction, "refit" if fit_scope == "train_validation" else name))
     return metrics, rows
 
 
-def _deep_refit_outputs(estimator, model_id, inputs, targets, *, class_mapping=None):
+def _deep_refit_outputs(estimator, model_id, inputs, targets, *, class_mapping=None, plan=None):
     if model_id == "N01":
         logits = predict_deep(estimator, model_id, inputs, class_count=len(class_mapping or []))
         predicted = np.argmax(logits, axis=1)
         actual = np.asarray(targets, dtype=np.int64)
-        return {"refit": _classification_metrics(actual, predicted)}, []
+        return {"refit": _deep_classification_metrics(actual, predicted, logits, class_mapping)}, []
     predicted = predict_deep(estimator, model_id, inputs).reshape(-1)
     actual = np.asarray(targets, dtype=np.float32).reshape(-1)
-    return {"refit": _regression_metrics(actual, predicted)}, []
+    return {"refit": _window_regression_metrics(actual, predicted, plan, include_validation=True) if plan is not None else _regression_metrics(actual, predicted)}, []
 
 
 def _hmm_rows(session, partition, states, posterior):
@@ -1292,3 +1294,34 @@ def _package_versions(model_id):
         except importlib.metadata.PackageNotFoundError:
             result[name] = "not-installed"
     return result
+
+
+def _logit_score_cache(logits):
+    values = np.asarray(logits, dtype=float)
+    shifted = values - values.max(axis=1, keepdims=True)
+    probabilities = np.exp(shifted)
+    probabilities /= probabilities.sum(axis=1, keepdims=True)
+    return probability_cache(probabilities, range(values.shape[1]))
+
+
+def _deep_classification_metrics(actual, predicted, logits, mapping):
+    cache = _logit_score_cache(logits)
+    # Keep sklearn's target input in the validated integer-ID domain. Decoding
+    # intentionally returns object arrays, which sklearn rejects for numeric
+    # labels even though their values are valid class IDs.
+    result = _classification_metrics(actual, predicted, cache)
+    for row in result["per_class"]:
+        row["class_label"] = mapping[int(row["class_label"])]["label"]
+    if "score_class_order" in result:
+        result["score_class_order"] = [entry["label"] for entry in mapping]
+    return result
+
+
+def _window_regression_metrics(actual, predicted, plan, *, include_validation=False):
+    parts = []
+    for name in (("train", "validation") if include_validation else ("train",)):
+        partition = getattr(plan, name)
+        values = np.asarray(plan._target_series.iloc[partition.row_positions], dtype=float)
+        parts.extend(np.split(values, np.cumsum(partition.lengths)[:-1]))
+    return _regression_metrics(actual, predicted, training_series=parts,
+                               horizons=np.full(len(actual), plan.sequence_config.horizon))
