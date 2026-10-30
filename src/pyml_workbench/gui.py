@@ -140,6 +140,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTabWidget,
     QTableView,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -1108,6 +1109,7 @@ class WorkbenchWindow(QMainWindow):
         self._run_timing: RunTiming | None = None
         self._run_timing_state: str | None = None
         self._config_file_path: Path | None = None
+        self._configuration_path: Path | None = None
         self._run_signature: str | None = None
         self._prepared_signature: str | None = None
         self._session_id: str | None = None
@@ -1280,16 +1282,38 @@ class WorkbenchWindow(QMainWindow):
         self.setMenuBar(_HoverMenuBar(self))
         file_menu = self.menuBar().addMenu("文件")
         self.recent_files_menu = file_menu.addMenu("最近文件")
-        self.save_config_action = QAction("保存参数配置 JSON…", self)
-        self.save_config_action.triggered.connect(
-            lambda _checked=False: self.save_configuration_json()
-        )
-        file_menu.addAction(self.save_config_action)
-        self.load_config_action = QAction("加载参数配置 JSON…", self)
+        self.load_config_action = QAction("导入设置…", self)
+        self.load_config_action.setShortcut("Ctrl+O")
+        self.load_config_action.setToolTip("从 JSON 文件导入当前实验的参数设置")
         self.load_config_action.triggered.connect(
             lambda _checked=False: self.load_configuration_json()
         )
         file_menu.addAction(self.load_config_action)
+        self.save_changes_action = QAction("保存修改", self)
+        self.save_changes_action.setShortcut("Ctrl+S")
+        self.save_changes_action.setToolTip("保存到当前设置文件；首次保存时选择文件")
+        self.save_changes_action.triggered.connect(
+            lambda _checked=False: self.save_configuration_changes()
+        )
+        file_menu.addAction(self.save_changes_action)
+        self.save_config_action = QAction("导出设置…", self)
+        self.save_config_action.setShortcut("Ctrl+Shift+S")
+        self.save_config_action.setToolTip("将当前实验参数另存为 JSON 文件")
+        self.save_config_action.triggered.connect(
+            lambda _checked=False: self.save_configuration_json()
+        )
+        file_menu.addAction(self.save_config_action)
+        settings_toolbar = QToolBar("参数设置", self)
+        settings_toolbar.setObjectName("configurationToolbar")
+        settings_toolbar.setMovable(False)
+        settings_toolbar.addAction(self.load_config_action)
+        settings_toolbar.addAction(self.save_changes_action)
+        settings_toolbar.addAction(self.save_config_action)
+        settings_toolbar.addSeparator()
+        self.configuration_file_label = QLabel("当前设置：尚未保存")
+        self.configuration_file_label.setAccessibleName("当前设置文件")
+        settings_toolbar.addWidget(self.configuration_file_label)
+        self.addToolBar(settings_toolbar)
         analysis_menu = self.menuBar().addMenu("分析")
         self.data_overview_action = QAction("数据概况…", self)
         self.data_overview_action.setObjectName("dataOverviewAction")
@@ -1827,7 +1851,23 @@ class WorkbenchWindow(QMainWindow):
         return True
 
     def save_configuration_json(self, path: str | Path | None = None) -> bool:
-        """Save the validated current ExperimentConfig without running a model."""
+        """Export settings; bind the first saved file for subsequent edits."""
+        return self._save_configuration(path, choose_destination=True)
+
+    def save_configuration_changes(self) -> bool:
+        """Write edits to the current settings file, asking for a path initially."""
+        return self._save_configuration(
+            self._configuration_path, choose_destination=False
+        )
+
+    def _set_configuration_path(self, path: str | Path) -> None:
+        self._configuration_path = Path(path).expanduser().absolute()
+        self.configuration_file_label.setText(f"当前设置：{self._configuration_path.name}")
+        self.configuration_file_label.setToolTip(str(self._configuration_path))
+
+    def _save_configuration(
+        self, path: str | Path | None, *, choose_destination: bool
+    ) -> bool:
         try:
             config = self.build_experiment_config()
         except Exception as exc:
@@ -1837,8 +1877,8 @@ class WorkbenchWindow(QMainWindow):
         if not destination:
             destination, _ = QFileDialog.getSaveFileName(
                 self,
-                "保存参数配置 JSON",
-                str(Path(self.dataset.source_path).with_suffix(".pyml.json")),
+                "导出设置" if choose_destination else "保存设置",
+                str(self._configuration_path or Path(self.dataset.source_path).with_suffix(".pyml.json")),
                 "PY-ML 参数配置 (*.json)",
             )
             _record_file_dialog_result(self.logging_controller, "save_configuration", bool(destination))
@@ -1853,6 +1893,8 @@ class WorkbenchWindow(QMainWindow):
         except Exception as exc:
             self.result_status_label.setText(f"参数配置保存失败：{exc}")
             return False
+        if self._configuration_path is None or not choose_destination:
+            self._set_configuration_path(destination)
         self.result_status_label.setText(
             f"参数配置已保存：{destination} · SHA-256 {digest}"
         )
@@ -1863,7 +1905,7 @@ class WorkbenchWindow(QMainWindow):
         source = str(path) if path is not None else ""
         if not source:
             source, _ = QFileDialog.getOpenFileName(
-                self, "加载参数配置 JSON", "", "PY-ML 参数配置 (*.json)"
+                self, "导入设置", "", "PY-ML 参数配置 (*.json)"
             )
             _record_file_dialog_result(self.logging_controller, "load_configuration", bool(source))
         if not source:
@@ -1874,6 +1916,7 @@ class WorkbenchWindow(QMainWindow):
             config = load_preset(source)
             if not self.apply_experiment_config(config):
                 return False
+            self._set_configuration_path(source)
         except Exception as exc:
             self.result_status_label.setText(f"参数配置加载失败：{exc}")
             return False
@@ -6076,6 +6119,7 @@ class WorkbenchWindow(QMainWindow):
             editable and source_matches and model_available
             and bool(self.selected_feature_columns())
         )
+        self.save_changes_action.setEnabled(self.save_config_action.isEnabled())
         self.load_config_action.setEnabled(editable)
         self.recent_files_menu.menuAction().setEnabled(editable)
         self.clear_recent_files_action.setEnabled(editable and bool(self.preferences.recent_files))
