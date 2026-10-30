@@ -1,7 +1,7 @@
 * text=auto eol=lf
 *.pdf binary
 *.py text eol=lf
-*.md text eol=lf
+*.md text eol=lf whitespace=-blank-at-eol
 *.toml text eol=lf
 *.lock text eol=lf
 *.json text eol=lf

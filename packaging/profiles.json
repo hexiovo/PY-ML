@@ -39,7 +39,46 @@
         "openpyxl",
         "PySide6",
         "matplotlib",
-        "xlrd"
+        "xlrd",
+        "packaging"
+      ]
+    },
+    "deep": {
+      "title": "标准深度版",
+      "summary": "标准版能力加 PyTorch/skorch 深度模型；不包含 HMM、TPE、遗传搜索或提升树 SDK。",
+      "extras": [
+        "desktop",
+        "deep"
+      ],
+      "model_sections": [
+        "active_models",
+        "deferred_models"
+      ],
+      "collect_submodules": [
+        "sklearn"
+      ],
+      "exclude_modules": [
+        "hmmlearn",
+        "optuna",
+        "pymoo",
+        "moocore",
+        "xgboost",
+        "lightgbm",
+        "catboost"
+      ],
+      "runtime_distributions": [
+        "numpy",
+        "scipy",
+        "pandas",
+        "scikit-learn",
+        "threadpoolctl",
+        "openpyxl",
+        "PySide6",
+        "matplotlib",
+        "xlrd",
+        "torch",
+        "skorch",
+        "packaging"
       ]
     },
     "full": {
@@ -94,7 +133,8 @@
         "pynndescent",
         "patsy",
         "formulaic",
-        "interface-meta"
+        "interface-meta",
+        "packaging"
       ]
     }
   },

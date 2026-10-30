@@ -47,21 +47,27 @@ def main():
     for document in ('README.md', 'version.md'):
         shutil.copy2(root / document, folder / document)
     shutil.copytree(root / 'docs', folder / 'docs', dirs_exist_ok=True)
-    guide_pdf = root / f'output/pdf/PYML-Workbench-{version}-图文指南.pdf'
-    assert guide_pdf.is_file(), f'the README-linked PDF guide is missing: {guide_pdf}'
-    guide_destination = folder / 'output/pdf' / guide_pdf.name
-    guide_destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(guide_pdf, guide_destination)
+    skill_source = root / 'skills/pyml-study-config'
+    assert (skill_source / 'SKILL.md').is_file(), 'missing study configuration skill'
+    shutil.copytree(skill_source, folder / 'skills/pyml-study-config', dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    portable_skill = root / 'dist/pyml-study-config-portable.md'
+    if portable_skill.is_file():
+        shutil.copy2(portable_skill, folder / 'skills/pyml-study-config-portable.md')
+    for template in (root / 'packaging/portable').iterdir():
+        if template.is_file():
+            (folder / template.name).write_text(template.read_text(encoding='utf-8'),
+                encoding='utf-8-sig' if template.suffix == '.ps1' else 'ascii')
     (folder / '启动说明.txt').write_text(
         f'PY-ML 中文机器学习工作台 {version}\n\n'
-        '双击 PYML-Workbench.exe 启动，无需安装 Python。\n'
+        '完整解压后双击 PYML-Workbench.exe 或 Start.cmd，无需安装 Python。\n'
+        '需要固定安装位置和桌面快捷方式时，运行 Install.cmd；无需管理员权限。\n'
         '请保留整个文件夹，包括 PYML-Worker.exe 与 _internal，不能只复制主 EXE。\n'
         '启动时会先显示“正在开启程序中…”；初始化完成后自动进入工作台。\n'
         '操作指南：主界面底部“操作指南”、帮助菜单或 F1；支持离线目录和搜索。\n'
         '文档：docs/overall-guide.md；日志和诊断：文件菜单 → 导出诊断包。\n'
-        + ('标准版包含 90 个基础模型（84 个 scikit-learn、4 个模型融合和 2 个朴素时序基线），不含可选扩展。'
-         if profile_name == 'standard' else
-         '完整扩展版中 N01 默认使用 CPU；仅在 CUDA PyTorch 可用时可选择 GPU，其他模型使用 CPU。')
+        '实验配置技能：skills/pyml-study-config/SKILL.md，供 AI 根据实验设计生成配置。\n'
+        + profile['summary']
         + '第三方来源及许可证见 docs/third-party.md 与 LICENSES。\n', encoding='utf-8-sig')
     notices = folder / 'LICENSES'
     copied = []
@@ -115,14 +121,9 @@ def main():
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:
         for path in sorted([*files, folder / 'SHA256SUMS.txt']):
             output.write(path, path.relative_to(folder.parent).as_posix())
-    # Preserve previous artifact lines, replacing only this version's owned entries.
     checksum = root / 'dist/SHA256SUMS.txt'
-    prior = checksum.read_text(encoding='utf-8') if checksum.exists() else ''
     entries = [folder / 'PYML-Workbench.exe', folder / 'PYML-Worker.exe', archive]
-    own_names = {p.relative_to(root / 'dist').as_posix() for p in entries}
-    lines = [line for line in prior.splitlines() if line.split('  ', 1)[-1] not in own_names]
-    lines += [f'{digest(p)}  {p.relative_to(root / "dist").as_posix()}' for p in entries]
-    checksum.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    checksum.write_text(''.join(f'{digest(p)}  {p.relative_to(root / "dist").as_posix()}\n' for p in entries), encoding='utf-8')
     report = {'version': version, 'folder_bytes': sum(p.stat().st_size for p in folder.rglob('*') if p.is_file()),
         'file_count': len(files) + 1, 'zip': str(archive), 'zip_bytes': archive.stat().st_size,
         'sha256': {p.relative_to(root).as_posix(): digest(p) for p in entries}}

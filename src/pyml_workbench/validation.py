@@ -45,14 +45,15 @@ def cross_validate_snapshot(config, snapshot, *, before_fit=None):
     from .catalog import build_estimator
     from .experiment import _classification_score_cache
     from .metrics import classification_metrics, regression_metrics, prediction_quantile
-    from .preprocessing import build_preprocessor
+    from .experiment import configured_preprocessor
+    from .preprocessing import fit_transform_preprocessor
 
     settings = config.evaluation
     settings.validate()
     dev = np.concatenate([snapshot.splits["train"], snapshot.splits["validation"]])
     scheme = settings.strategy
     if scheme == "auto":
-        scheme = config.split.strategy if config.split.strategy != "random" else ("stratified" if config.task == "classification" else "kfold")
+        scheme = config.split.strategy if config.split.strategy not in {"random", "holdout"} else ("stratified" if config.task == "classification" else "kfold")
     structure = getattr(snapshot, "structure", None)
     if scheme == "time":
         # The snapshot partitions already preserve strict temporal order.
@@ -76,8 +77,8 @@ def cross_validate_snapshot(config, snapshot, *, before_fit=None):
     for index, (train_local, val_local) in enumerate(folds, 1):
         train, validation = dev[train_local], dev[val_local]
         estimator = build_estimator(config.model_id, config.parameters, seed=config.split.seed)
-        transformer, _ = build_preprocessor(snapshot.features.iloc[train], config.model_id, config.parameters)
-        ready_train = transformer.fit_transform(snapshot.features.iloc[train])
+        transformer, _, _ = configured_preprocessor(snapshot.features.iloc[train], config)
+        ready_train, reduction_metadata = fit_transform_preprocessor(transformer, snapshot.features.iloc[train], fit_scope="cv_fold_train")
         ready_validation = transformer.transform(snapshot.features.iloc[validation])
         actual_train = snapshot.target.iloc[train].to_numpy()
         if before_fit:
@@ -97,7 +98,7 @@ def cross_validate_snapshot(config, snapshot, *, before_fit=None):
                 training_series=np.asarray(actual_train, dtype=float) if scheme == "time" else None,
                 seasonal_period=getattr(estimator, "mase_period_", 1),
                 horizons=np.arange(settings.gap + 1, settings.gap + len(validation) + 1) if config.model_id.startswith("T") else None)
-        reports.append({"fold": index, "train_positions": train.tolist(), "validation_positions": validation.tolist(), "metrics": metrics})
+        reports.append({"fold": index, "train_positions": train.tolist(), "validation_positions": validation.tolist(), "metrics": metrics, "reduction": reduction_metadata})
     from .metrics import METRICS
     means, deviations = {}, {}
     for metric in METRICS[config.task]:

@@ -1,6 +1,6 @@
 # 序列模型指南
 
-本指南介绍 HMM 序列建模和 N04/N06 窗口回归。HMM 依赖 `sequence` extra；窗口回归使用 `deep` extra。两类模型都能在 CPU 上运行。本项目将深度模型固定为 CPU 设备；当前没有经过验证的 GPU 运行路径。
+本指南介绍 HMM 序列建模和 N04/N06/N07/N08/N09 窗口回归。HMM 依赖 `sequence` extra；窗口回归使用 `deep` extra。当前这些序列模型使用 CPU。N01 单独提供可选 CUDA 设备，是否开放取决于运行环境检查。
 
 在项目虚拟环境中安装所需 extra：
 
@@ -8,7 +8,7 @@
 uv sync --locked --no-editable --no-dev --extra sequence --extra deep
 ```
 
-如果只用 HMM，可只安装 `--extra sequence`；只用 LSTM/GRU，可只安装 `--extra deep`。
+如果只用 HMM，可只安装 `--extra sequence`；只用窗口深度模型，可只安装 `--extra deep`。
 
 ## 选择序列顺序和划分
 
@@ -76,9 +76,9 @@ HMM 输入映射必须恰好包含 `observations` 和 `lengths`。可用的操�
 
 H03 验证观测如果不在训练字母表中，会在训练/验证准备阶段被拒绝。测试观测中的未知类别会留到显式最终测试时再检查；该错误发生在测试调用中，核心会将这次测试尝试标记为已进入最终阶段，同一会话不能重试。预测新数据时同样会拒绝训练字母表之外的类别。H01/H02 的测试原始值也延迟到最终测试转换和校验。
 
-## N04/N06 窗口与预测位置
+## N04/N06/N07/N08/N09 窗口与预测位置
 
-N04 是 LSTM 回归，N06 是 GRU 回归。它们读取数值特征窗口，并预测该窗口之后一个时点的目标。`SequenceConfig.window` 和 `horizon` 默认分别为 `10` 和 `1`。对 0 起始位置 `0..`，窗口 `0..9` 的目标位置是 `10`；下一条窗口 `1..10` 的目标是 `11`。一般情况下，窗口来源行从 `s` 到 `s + window - 1`，目标位置为 `s + window - 1 + horizon`。长度为 `L` 的组或切分段最多产生 `max(0, L - window - horizon + 1)` 个窗口。
+N04 是 LSTM，N06 是 GRU，N07 是 1D CNN，N08 是 TCN，N09 是 Transformer 编码器；均为窗口回归。它们读取数值特征窗口，并预测该窗口之后指定 horizon 的目标。`SequenceConfig.window` 和 `horizon` 默认分别为 `10` 和 `1`。对 0 起始位置 `0..`，窗口 `0..9` 的目标位置是 `10`；下一条窗口 `1..10` 的目标是 `11`。一般情况下，窗口来源行从 `s` 到 `s + window - 1`，目标位置为 `s + window - 1 + horizon`。长度为 `L` 的组或切分段最多产生 `max(0, L - window - horizon + 1)` 个窗口。各模型参数见[模型索引](model-index.md)。
 
 N06 的配置会把回归目标与输入特征分开：
 
@@ -115,7 +115,7 @@ config = ExperimentConfig(
 
 每组 30 行可形成 `30 - 10 - 1 + 1 = 20` 个窗口。第一条训练窗口的来源位置是 `[0, 1, ..., 9]`，目标位置是 `10`。组大小不等时，分区行数和窗口数会相应变化；请使用会话的 `session.sequence_plan` 查看实际计划，不要把上表示例当成每份数据的固定计数。
 
-准备 N04/N06 时，目标列必须指定，输入特征列必须是数值且不得包括组、时间或目标列。每个分区内每个组至少需要 `window + horizon` 行。最终 bundle 的 recurrent 推理形状为 `(B, L, F)`：`B` 是窗口批数，`L` 必须等于训练时的窗口长度，`F` 是原始数值特征数。
+准备 N04/N06/N07/N08/N09 时，目标列必须指定，输入特征列必须是数值且不得包括组、时间或目标列。每个分区内每个组至少需要 `window + horizon` 行。最终 bundle 的窗口推理形状为 `(B, L, F)`：`B` 是窗口批数，`L` 必须等于训练时的窗口长度，`F` 是原始数值特征数。
 
 ```python
 from pyml_workbench import load_model
@@ -138,4 +138,4 @@ future_targets = predict_extended(gru, new_windows)
 
 设置 `ExperimentConfig.output_dir` 后，最终结果导出 `model.joblib`、指标与逐行结果；通过 `load_model()` 加载推理模型。扩展模型的 CPU bundle 保存已拟合预处理、模型状态、配置和训练类别/字母表等推理所需信息，不保存原始行、序列计划、验证/测试数据或优化器状态。把 `model.joblib` 作为推理模型分享时，仍须遵守训练数据和模型工件的访问策略。
 
-本指南中 HMM 与 recurrent 示例均针对 CPU 路径；深度实现显式设置 `device="cpu"`。尚未记录 GPU 支持验证结果。
+本指南中的 HMM 与窗口模型使用 CPU。N01 的 CUDA 设备选项只在 CUDA PyTorch 与 GPU 检查通过后出现；该路径不适用于本指南中的序列模型。

@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--version', default=metadata.version('pyml-workbench'))
     parser.add_argument('--archive', type=Path, help='verify a named profile ZIP without changing legacy defaults')
     parser.add_argument('--evidence', type=Path, help='write checks into a separate verification directory')
+    parser.add_argument('--install-check', action='store_true', help='also check user installation and the bundled dependency installer')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
         parser.error('version must use major.minor.patch digits')
@@ -66,6 +67,37 @@ def main():
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             event = json.loads(worker.stdout)
             assert worker.returncode == 1 and event['type'] == 'error' and len(event['error_id']) == 32
+            install_result = None
+            if args.install_check:
+                install_root, desktop = target / 'installed', target / 'desktop'
+                desktop.mkdir()
+                install_command = ['powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                    '-File', str(distribution / 'install.ps1'), '-InstallRoot', str(install_root),
+                    '-ShortcutDirectory', str(desktop)]
+                installation = subprocess.run(install_command, capture_output=True, timeout=120)
+                (evidence / 'logs/install.log').write_bytes(installation.stdout + installation.stderr)
+                assert installation.returncode == 0, 'user installation failed; see install.log'
+                installed = install_root / args.version
+                for relative in ('PYML-Workbench.exe', 'PYML-Worker.exe', 'skills/pyml-study-config/SKILL.md',
+                                 '_internal/pyml_workbench/resources/overall-guide.md'):
+                    assert (installed / relative).read_bytes() == (distribution / relative).read_bytes(), relative
+                assert (desktop / f'PY-ML Workbench {args.version}.lnk').is_file()
+                repeated = subprocess.run(install_command, capture_output=True, timeout=30)
+                assert repeated.returncode != 0, 'existing installation was unexpectedly overwritten'
+                assert (installed / 'PYML-Workbench.exe').read_bytes() == (distribution / 'PYML-Workbench.exe').read_bytes()
+                tools_python = installed / '_internal/dependency-tools/python/python.exe'
+                tools_env = target / 'dependency-install-test'
+                created = subprocess.run([str(tools_python), '-I', '-m', 'venv', str(tools_env)],
+                    env=env, capture_output=True, timeout=60,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                assert created.returncode == 0, created.stderr.decode('utf-8', errors='replace')
+                pip = subprocess.run([str(tools_env / 'Scripts/python.exe'), '-I', '-m', 'pip', '--version'],
+                    env=env, capture_output=True, timeout=30,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                assert pip.returncode == 0 and b'pip ' in pip.stdout
+                install_result = {'user_install': 'PASS', 'desktop_shortcut_created': True,
+                                  'existing_install_not_overwritten': True,
+                                  'bundled_python_venv_and_pip': 'PASS', 'network_install': 'NOT_RUN'}
             with archive.open('rb') as stream:
                 archive_digest = hashlib.file_digest(stream, 'sha256').hexdigest()
             report = {'overall': 'PASS', 'version': args.version, 'zip_sha256': archive_digest,
@@ -73,7 +105,7 @@ def main():
                 'relocated_gui': 'visible Chinese window, external Unicode path, system-only PATH',
                 'relocated_guide': 'actual frozen F1 entry -> offline guide; resource matches public document' if guide_present else 'not available in this version',
                 'relocated_worker': 'structured error event from actual copied EXE',
-                'source_or_python_env_dependency': False}
+                'source_or_python_env_dependency': False, 'installation': install_result}
             (evidence / 'zip-verification.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     print('PASS relocated GUI/worker', flush=True)
 

@@ -20,14 +20,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('distribution', type=Path)
     parser.add_argument('evidence', type=Path)
-    parser.add_argument('--profile', choices=('standard', 'full'),
+    parser.add_argument('--profile', choices=('standard', 'deep', 'full'),
                         help='also verify that profile exclusions are absent from both EXEs')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    required = {'pyml_workbench', 'pyml_workbench.gui', 'pyml_workbench._worker',
-                'pyml_workbench.metrics', 'pyml_workbench.validation',
-                'pyml_workbench.ensembles', 'pyml_workbench.autoencoder',
-                'pyml_workbench.forecast_models', 'pyml_workbench.sequence_models'}
+    required = {'pyml_workbench.gui', 'pyml_workbench.windows_identity', 'pyml_workbench.preferences', 'pyml_workbench.sequence_models', 'pyml_workbench.data', 'pyml_workbench.plugins', 'pyml_workbench.plot_dialog', 'pyml_workbench.cv_experiment', 'pyml_workbench.search', 'pyml_workbench.cross_validation', 'pyml_workbench.checkpoints', 'pyml_workbench.evaluation_ui', 'pyml_workbench.plot_cache', 'pyml_workbench.extended_experiment', 'pyml_workbench.environment_check', 'pyml_workbench.environment_install', 'pyml_workbench.plotting', 'pyml_workbench', 'pyml_workbench.selection', 'pyml_workbench.metrics', 'pyml_workbench.batch', 'pyml_workbench.dependency_paths', 'pyml_workbench.validation', 'pyml_workbench.ensembles', 'pyml_workbench.history', 'pyml_workbench.batch_gui', 'pyml_workbench._worker', 'pyml_workbench.guide', 'pyml_workbench.forecast_models', 'pyml_workbench.environment_dialog', 'pyml_workbench.plugin_dialog', 'pyml_workbench.preprocessing', 'pyml_workbench.config', 'pyml_workbench.experiment', 'pyml_workbench.autoencoder'}
     checked = []
     exclusions = []
     if args.profile:

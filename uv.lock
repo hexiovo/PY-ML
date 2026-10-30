@@ -857,11 +857,12 @@ wheels = [
 
 [[package]]
 name = "pyml-workbench"
-version = "0.4.4"
+version = "0.4.6"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "openpyxl" },
+    { name = "packaging" },
     { name = "pandas" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -910,6 +911,7 @@ requires-dist = [
     { name = "numpy", specifier = "==2.5.3" },
     { name = "openpyxl", specifier = "==3.1.5" },
     { name = "optuna", marker = "extra == 'search'", specifier = "==5.0.0" },
+    { name = "packaging", specifier = "==26.3" },
     { name = "pandas", specifier = "==3.0.6" },
     { name = "pymoo", marker = "extra == 'search'", specifier = "==0.6.2" },
     { name = "pyside6", marker = "extra == 'desktop'", specifier = "==6.11.2" },

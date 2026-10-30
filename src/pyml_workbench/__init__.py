@@ -1,4 +1,8 @@
 """pyml-workbench: tabular and sequence ML with validation search and durable queues."""
+from .dependency_paths import activate_dependencies as _activate_dependencies
+
+_activate_dependencies()
+
 from .adapters import EstimatorAdapter, UnsupportedOperationError
 from .catalog import (
     ModelNotAvailableError,
@@ -48,7 +52,7 @@ from .search_space import SearchSpace, recommended_space
 from .sequence import SequenceConfig, SequenceError, SequencePlan
 from .selection import FinalSelection, FrozenSelection
 
-__version__ = "0.4.4"
+__version__ = "0.4.6"
 
 __all__ = [
     "BatchError",

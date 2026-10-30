@@ -43,13 +43,17 @@ def build_session_plot_cache_manifest(session) -> dict[str, Any]:
     if not isinstance(session, ExperimentSession):
         raise PlotCacheError("无法为不兼容的 session 创建绘图缓存 manifest。")
     try:
-        if not isinstance(session.splits, Mapping) or set(session.splits) != {
-            "train", "validation", "test"
-        }:
+        is_cv = session.config.split.strategy == "kfold"
+        split_names = (
+            ("development", "test")
+            if is_cv and session.fit_scope == "cv_development"
+            else ("train", "validation", "test")
+        )
+        if not isinstance(session.splits, Mapping) or set(session.splits) != set(split_names):
             raise ValueError("session split 集合不完整")
         split_positions = {
             name: [int(value) for value in np.asarray(session.splits[name], dtype=np.int64)]
-            for name in ("train", "validation", "test")
+            for name in split_names
         }
         sequence_plan = getattr(session, "sequence_plan", None)
         if sequence_plan is not None:
@@ -74,6 +78,33 @@ def build_session_plot_cache_manifest(session) -> dict[str, Any]:
         plot_explanations = getattr(session, "plot_explanations", {})
         if not isinstance(plot_scores, Mapping) or not isinstance(plot_explanations, Mapping):
             raise ValueError("session score/explanation cache metadata must be mappings")
+        cv_payload = None
+        if is_cv:
+            metrics = getattr(session, "metrics", {})
+            cv_metadata = getattr(session, "cv_metadata", None)
+            if not isinstance(cv_metadata, Mapping):
+                cv_metadata = metrics.get("cv") if isinstance(metrics, Mapping) else None
+            if not isinstance(cv_metadata, Mapping):
+                raise ValueError("K-fold session 缺少完整 cv_metadata")
+            if not isinstance(metrics, Mapping) or not isinstance(metrics.get("oof"), Mapping):
+                raise ValueError("K-fold session 缺少 OOF metrics")
+            raw_rows = getattr(session, "rows", [])
+            oof_rows = _plot_cache_records_payload(
+                [row for row in raw_rows if isinstance(row, Mapping) and row.get("split") == "oof"]
+            )
+            oof_scores = plot_scores.get("oof")
+            cv_payload = {
+                "metadata": dict(cv_metadata),
+                "metrics": {
+                    "cv": metrics.get("cv"),
+                    "oof": metrics.get("oof"),
+                    "selection_validation": metrics.get("selection_validation"),
+                },
+                "rows": oof_rows,
+                "scores": _plot_cache_value_payload(oof_scores),
+            }
+            if not oof_rows:
+                raise ValueError("K-fold session 缺少 OOF 结果行")
         digests = {
             "frozen_config": _plot_cache_domain_sha256(
                 "frozen_config",
@@ -99,8 +130,12 @@ def build_session_plot_cache_manifest(session) -> dict[str, Any]:
             "scores": _plot_cache_domain_sha256("scores", dict(plot_scores)),
             "explanations": _plot_cache_domain_sha256("explanations", dict(plot_explanations)),
         }
+        if is_cv:
+            digests["cv_payload"] = _plot_cache_domain_sha256(
+                "cv_payload", _plot_cache_value_payload(cv_payload)
+            )
         payload = {
-            "schema_version": 2,
+            "schema_version": 3,
             "kind": _PLOT_CACHE_MANIFEST_KIND,
             "digests": digests,
         }
@@ -138,7 +173,7 @@ def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) ->
         "digests": stored.get("digests"),
     }
     if (
-        payload["schema_version"] not in {1, 2}
+        payload["schema_version"] not in {1, 2, 3}
         or payload["kind"] != _PLOT_CACHE_MANIFEST_KIND
         or not isinstance(payload["digests"], dict)
         or not _is_sha256(stored.get("manifest_sha256"))
@@ -165,12 +200,23 @@ def _verify_session_plot_cache_manifest(envelope: Mapping[str, Any], session) ->
     if payload["schema_version"] == 1:
         # Version 1 caches predate real estimator scores and native explanation
         # metadata. Their original digests still protect all existing plot data.
-        if any(name in stored_digests for name in ("scores", "explanations")):
+        if any(name in stored_digests for name in ("scores", "explanations", "cv_payload")):
             raise PlotCacheError("旧版 session 绘图缓存含有未知的评分或解释摘要。")
+        legacy_names = ("frozen_config", "features", "target", "splits", "sequence_mapping", "result_rows")
+        if stored_digests != {name: expected_digests[name] for name in legacy_names}:
+            raise PlotCacheError("旧版 session 绘图缓存摘要与当前数据不匹配。")
+    elif payload["schema_version"] == 2:
+        legacy_names = (
+            "frozen_config", "features", "target", "splits", "sequence_mapping",
+            "result_rows", "scores", "explanations",
+        )
+        if stored_digests != {name: expected_digests[name] for name in legacy_names}:
+            raise PlotCacheError("session 评分/解释缓存与完整性 manifest 不匹配。")
     else:
         if (
             stored_digests.get("scores") != expected_digests["scores"]
             or stored_digests.get("explanations") != expected_digests["explanations"]
+            or stored_digests.get("cv_payload") != expected_digests.get("cv_payload")
             or stored != expected
         ):
             raise PlotCacheError("session 评分/解释缓存与完整性 manifest 不匹配。")
@@ -370,7 +416,7 @@ def load_single_session_plot_sources(
         raise PlotCacheError("本次实验 session 身份或路径与当前窗口不匹配。")
     session = envelope.get("session")
     if session is None:
-        raise PlotCacheError("本次实验 session 没有已拟合的结果缓存。")
+        raise PlotCacheError("本次实验 session 没有可用的结果缓存。")
     plot_manifest_version = _verify_session_plot_cache_manifest(envelope, session)
     manifest = _validate_session(session, expected_config_sha256=frozen_config_sha256)
     if envelope.get("frozen_config_sha256") != frozen_config_sha256:
@@ -378,7 +424,8 @@ def load_single_session_plot_sources(
 
     sources: list[Any] = []
     unavailable: list[tuple[str, str]] = []
-    for partition in ("train", "validation"):
+    partitions = ("oof",) if session.config.split.strategy == "kfold" else ("train", "validation")
+    for partition in partitions:
         source = _session_partition_source(
             session,
             partition,
@@ -459,9 +506,7 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
         raise PlotCacheError("winner session 文件缺失。")
     winner_manifest_path = session_plot_cache_manifest_path(winner_path)
     if not winner_manifest_path.is_file():
-        raise PlotCacheError(
-            "winner session 缺少绘图完整性 manifest；其 train/validation 结果图不可用。"
-        )
+        raise PlotCacheError("winner session 缺少绘图完整性 manifest；其结果图不可用。")
     try:
         winner_plot_manifest = json.loads(winner_manifest_path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -493,7 +538,8 @@ def load_batch_plot_sources(history_path: str | Path, job_id: str) -> PlotSource
     }
     sources: list[Any] = []
     unavailable: list[tuple[str, str]] = []
-    for partition in ("train", "validation"):
+    partitions = ("oof",) if result.config.split.strategy == "kfold" else ("train", "validation")
+    for partition in partitions:
         source = _session_partition_source(
             winner_session,
             partition,
@@ -634,7 +680,8 @@ def _session_partition_source(
         PlotSequenceMap, PlotSource,
     )
 
-    if partition not in {"train", "validation", "test"}:
+    is_cv = session.config.split.strategy == "kfold"
+    if partition not in ({"train", "validation", "test", "oof"} if is_cv else {"train", "validation", "test"}):
         raise PlotCacheError(f"Unsupported result partition {partition!r}")
     result = getattr(session, "result", None)
     result_frame = result.results if result is not None else pd.DataFrame(getattr(session, "rows", []))
@@ -649,7 +696,12 @@ def _session_partition_source(
     features = getattr(session, "features", None)
     if not isinstance(features, pd.DataFrame) or any(position >= len(features) for position in positions):
         raise PlotCacheError(f"{partition} 缓存的 row_position 超出当前 session 数据范围。")
-    split_positions = getattr(session, "splits", {}).get(partition)
+    split_name = partition
+    if partition == "oof":
+        split_name = "development" if "development" in getattr(session, "splits", {}) else "train"
+    split_positions = getattr(session, "splits", {}).get(split_name)
+    if split_positions is None:
+        raise PlotCacheError(f"{partition} 缓存缺少其所有者分区位置。")
     allowed_positions = set(int(value) for value in np.asarray(split_positions, dtype=np.int64).tolist())
     if not set(positions).issubset(allowed_positions):
         raise PlotCacheError(f"{partition} 结果行不属于该 session 的同名分区。")
@@ -729,7 +781,11 @@ def _session_partition_source(
             score_unavailable_reason = "当前评估分区只有一个类别；ROC/PR 需要正例和负例同时存在。"
     explanation_cache = None
     explanation_unavailable_reason = None
-    if plot_manifest_version == 1:
+    if is_cv and session.fit_scope == "cv_development":
+        explanation_unavailable_reason = (
+            "CV 折外评估尚未冻结开发集最终模型；冻结并完成开发集 refit 后才可查看模型解释。"
+        )
+    elif plot_manifest_version == 1:
         explanation_unavailable_reason = (
             "旧版 session manifest 未保护模型解释量，需重新训练后才能查看模型系数或特征重要性。"
         )
@@ -881,6 +937,25 @@ def _validate_session(session, *, snapshot=None, expected_config_sha256: str):
         config_sha256 != expected_config_sha256
         or config_sha256 != session.frozen_config_sha256
         or frozen_config != session.frozen_config
+    ):
+        raise PlotCacheError("session 冻结配置与来源配置哈希不一致。")
+    is_cv = session.config.split.strategy == "kfold"
+    if is_cv:
+        try:
+            from .cv_experiment import verify_cv_refit_session, verify_cv_session
+
+            if session.fit_scope == "cv_development" and session.fitted_model is None:
+                verify_cv_session(session, snapshot=snapshot, config=session.config)
+            elif session.fit_scope == "train_validation" and session.fitted_model is not None:
+                verify_cv_refit_session(session, snapshot=snapshot, config=session.config)
+            else:
+                raise PlotCacheError("K-fold session 的 fit_scope / fitted model 状态无效。")
+        except PlotCacheError:
+            raise
+        except Exception as exc:
+            raise PlotCacheError(f"K-fold OOF / cv_metadata 完整性核验失败：{exc}") from exc
+    elif (
+        session.fitted_model is None
         or session.fitted_model.config != frozen_config
         or session.fitted_model.frozen_config_sha256 != config_sha256
     ):
@@ -899,7 +974,19 @@ def _validate_session(session, *, snapshot=None, expected_config_sha256: str):
             raise PlotCacheError("session 数据快照与 owned snapshot manifest 不一致。")
         if _table_digest(session.features) != _table_digest(snapshot.features):
             raise PlotCacheError("session 特征与 owned snapshot 不一致。")
-        if session.fit_scope == "train":
+        if is_cv and session.fit_scope == "cv_development":
+            if _table_digest(session.target) != _table_digest(snapshot.target):
+                raise PlotCacheError("CV evaluation session 目标与 owned snapshot 不一致。")
+            expected_splits = snapshot.splits
+        elif is_cv and session.fit_scope == "train_validation":
+            if _table_digest(session.target) != _table_digest(snapshot.target):
+                raise PlotCacheError("CV refit session 目标与 owned snapshot 不一致。")
+            expected_splits = {
+                "train": snapshot.splits["development"],
+                "validation": np.array([], dtype=np.int64),
+                "test": snapshot.splits["test"],
+            }
+        elif session.fit_scope == "train":
             if _table_digest(session.target) != _table_digest(snapshot.target):
                 raise PlotCacheError("session 目标与 owned snapshot 不一致。")
             expected_splits = snapshot.splits
@@ -927,13 +1014,23 @@ def _validate_session(session, *, snapshot=None, expected_config_sha256: str):
         })
         if manifest.get("data_sha256") is not None and observed_data_sha256 != manifest.get("data_sha256"):
             raise PlotCacheError("session 数据哈希与缓存特征/目标不匹配。")
-        positions = {
-            name: [int(value) for value in np.asarray(session.splits[name], dtype=np.int64)]
-            for name in ("train", "validation", "test")
-        }
-        observed_split_sha256 = _json_digest(positions)
-        if manifest.get("split_sha256") is not None and observed_split_sha256 != manifest.get("split_sha256"):
-            raise PlotCacheError("session split 哈希与缓存行位置不匹配。")
+        split_names = (
+            ("development", "test")
+            if is_cv and session.fit_scope == "cv_development"
+            else ("train", "validation", "test")
+        )
+        if not (is_cv and session.fit_scope == "train_validation"):
+            positions = {
+                name: [int(value) for value in np.asarray(session.splits[name], dtype=np.int64)]
+                for name in split_names
+            }
+            observed_split_sha256 = _json_digest(positions)
+            if manifest.get("split_sha256") is not None and observed_split_sha256 != manifest.get("split_sha256"):
+                raise PlotCacheError("session split 哈希与缓存行位置不匹配。")
+        else:
+            # The verified final-refit session exposes train/validation/test
+            # positions, while its owned CV snapshot retains development/test.
+            observed_split_sha256 = manifest.get("split_sha256")
         expected_source = Path(session.config.dataset.source_path).expanduser().resolve()
         if Path(session.source_path).expanduser().resolve() != expected_source:
             raise PlotCacheError("session source path 与其冻结配置不一致。")

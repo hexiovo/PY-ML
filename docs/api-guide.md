@@ -1,6 +1,6 @@
 # Python API 指南
 
-本指南对应 **0.4.0（2026-10-02）**。基础图表 API 仅消费调用方提供的不可变来源数据；payload 构造不读文件、不启动模型操作，Matplotlib 仅在渲染时导入。
+本指南介绍 `pyml_workbench` 当前公开的数据、配置、训练、验证、模型和图表 API。接口签名以所安装发行版的源码和 API 文档为准；本指南中的示例使用合成数据。
 
 从 `pyml_workbench` 导入公开配置、数据、目录和实验接口。安装并启动虚拟环境后，运行示例：
 
@@ -14,7 +14,7 @@
 
 ## 准备配置与读取数据
 
-核心数据配置由 `DatasetConfig`、`SplitConfig` 和 `ExperimentConfig` 组成。`DatasetConfig` 接受 CSV/XLSX/XLS 路径、可选工作表名、目标列名和特征列；监督任务必须指定目标列。`SplitConfig` 默认使用 seed 42 与固定的 60/20/20 划分。`ExperimentConfig` 再指定任务、模型 ID、参数、可选序列配置和输出目录。
+核心数据配置由 `DatasetConfig`、`SplitConfig` 和 `ExperimentConfig` 组成。`DatasetConfig` 接受 CSV/XLSX/XLS 路径、可选工作表名、目标列名、特征列和参考标签列；监督任务必须指定目标列。CSV 默认使用 `utf-8-sig` 编码。`SplitConfig` 默认使用 seed 42 与固定的 60/20/20 留出比例；`ExperimentConfig` 再指定任务、模型 ID、参数、可选序列设置、交叉验证和训练前降维。数据读取配置不包含任意编码、分隔符、单位换算或转换图。
 
 ```python
 from pyml_workbench import DatasetConfig, ExperimentConfig, SequenceConfig, SplitConfig
@@ -33,7 +33,15 @@ config = ExperimentConfig(
 )
 ```
 
-`ExperimentConfig.sequence` 可选接收 `SequenceConfig`，用于 HMM 和窗口回归模型。未设置分组/时间列时，源文件行顺序表示一条序列；指定分组后会将整组分配到同一个 train、validation 或 test 分区，指定时间列后会在每组内稳定排序。`preview_dataset(path, rows=20)` 返回样本、列名/类型、缺失数和 Excel 工作表；`load_dataset(path)` 返回完整的 `LoadedDataset`。`select_features_target(dataset, task=..., target_column=..., feature_columns=...)` 返回列副本并拒绝缺失监督目标。读取函数不会写入原始文件。
+`SplitConfig.strategy` 支持 `random`、`holdout`、`group`、`time` 和独立 `kfold`。组列和时间列只能用于相应策略，不能同时用于普通表格外层划分；固定分区比例不可改。`kfold` 只支持普通表格分类/回归，使用 `n_splits`（2–10）并保留最终测试数据；它不能同时与 `evaluation` 设置。
+
+`ExperimentConfig.evaluation` 可接收 `EvaluationConfig(folds=5, strategy="auto", gap=0)`，在普通留出流程上附加折验证。折仅使用 train+validation 开发分区；每折单独拟合预处理，测试集不参与搜索。可选 strategy 为 `auto`、`stratified`、`kfold`、`group`、`time`；group/time 折须与对应外层划分匹配。此路径支持普通分类/回归和 T01–T05，不能用于 HMM/窗口序列模型。`gap` 仅作用于时间折，不等于最终 test 的 purge/embargo。
+
+`ExperimentConfig.sequence` 可选接收 `SequenceConfig`，用于 HMM 和窗口回归模型。未设置分组/时间列时，源文件行顺序表示一条序列；指定分组后会将整组分配到同一个 train、validation 或 test 分区，指定时间列后会在每组内稳定排序。序列模型要求普通 `split.strategy` 为 `random` 或 `holdout`，组和时间结构由 `SequenceConfig` 表示。`preview_dataset(path, rows=20)` 返回样本、列名/类型、缺失数和 Excel 工作表；`load_dataset(path)` 返回完整的 `LoadedDataset`。`select_features_target(dataset, task=..., target_column=..., feature_columns=...)` 返回列副本并拒绝缺失监督目标。读取函数不会写入原始文件。
+
+`ExperimentConfig.reduction_method` 与 `reduction_components` 必须同时设置或同时省略。方法可选 `pca`、`truncated_svd`、`fast_ica`、`gaussian_random_projection` 和 `kernel_pca`；`SplitConfig.seed` 会作为降维器的随机种子。降维接在缺失值填补、数值缩放和类别独热编码之后，仅使用当前流程允许的拟合分区拟合；验证、测试、交叉验证折外预测和推理调用已拟合变换。输出维数必须小于预处理后的输入特征数；PCA、TruncatedSVD 和 FastICA 还受拟合行数限制，PCA、TruncatedSVD、FastICA 和 KernelPCA 另外受训练数据有效秩限制。超出限制时准备阶段会明确报错。拟合结果在模型 `preprocessing["reduction"]` 中记录方法、配置、输入/输出维数和拟合范围；PCA 还记录组件解释方差。
+
+`ExperimentConfig.pca_components` 是旧版 PCA 配置字段，仍可接收正整数；缺省或 `None` 表示不启用。只包含该旧字段的 preset 会保留其旧 canonical 表示；在界面中更改方法或维数后，配置会改用 `reduction_method="pca"` 和 `reduction_components`。训练前降维会产生连续且可能为负的分量，因此不能与要求非负输入的 MultinomialNB/ComplementNB、要求非负整数类别 ID 的 CategoricalNB、独立降维任务或 HMM/窗口回归模型组合。
 
 ## 显式控制验证与最终测试
 
@@ -58,16 +66,33 @@ print(result.audit["test_evaluation_count"])
 
 - `prepare_experiment(config, *, on_event=None) -> ExperimentSession` 验证配置、建立共同划分、只在训练分区拟合预处理和 estimator，并计算训练/验证结果。它不计算测试指标，也不让测试结果参与选择。
 - `freeze_experiment(session, expected_config=None) -> ExperimentSession` 校验训练配置快照和 SHA-256；如果传入 `expected_config`，也必须与拟合配置相同。它记录对当前模型/参数快照的显式批准。
-- `evaluate_test(session, *, on_event=None, export_artifacts=True) -> ExperimentResult` 只接受已冻结会话。测试评估至多执行一次；成功结果会缓存并在重复 API 读取时返回同一结果，不会重测。失败或中断会把会话标记为不可重试。需要新尝试时，应重新准备一个新会话并重新冻结。
+- `evaluate_test(session, *, on_event=None, export_artifacts=True) -> ExperimentResult` 只接受已冻结会话。测试评估至多执行一次；成功结果会缓存并在重复 API 读取时返回同一结果，不会重测。失败或中断会把会话标记为不可重试；不要以新会话重测同一最终测试集。新的最终评估应依据研究计划使用新的独立数据。
 - 如配置了 `output_dir`，默认在最终评估时写出配置、指标、逐行结果、模型和 manifest。`export_artifacts=False` 可在调用中关闭文件写入。
+
+`split.strategy="kfold"` 使用独立的 OOF 评估流程。`prepare_experiment` 返回各折结果与 OOF 指标，但会话没有最终拟合模型，直接调用 `freeze_experiment` 会报错。检查 OOF 结果并确定配置后，可调用专用重拟合函数，再进行唯一一次最终测试：
+
+```python
+from pyml_workbench import evaluate_test, prepare_experiment
+from pyml_workbench.cv_experiment import refit_cv_session
+
+cv_session = prepare_experiment(kfold_config)
+print(cv_session.metrics["validation"])
+print(cv_session.metrics["oof"])
+
+# 在确认 OOF 评估与配置后，于 train+validation 开发数据上重拟合并冻结。
+frozen_session = refit_cv_session(cv_session, expected_config=kfold_config)
+result = evaluate_test(frozen_session)
+```
+
+`refit_cv_session` 会拟合最终模型并返回已冻结会话；它本身不评估测试集。`finalize_experiment` 对 K-fold 会话会自动重拟合并进入最终测试，因此不适合只检查配置或尚未确认 OOF 结果时调用。批量搜索的 K-fold winner 应使用 `freeze_search_winner` 和 `finalize_frozen_search`。N01/N02 early-stopping 训练不支持直接 `split.strategy="kfold"` 兼容路径；请按当前目标 API 核实可用验证配置。
 
 结果包含 `config`、`metrics`、`audit`、`results`（pandas DataFrame）、拟合 `model` 和 `artifact_paths`。审计字段记录 split 索引、配置哈希、事件顺序及测试计数。
 
 ## HMM 与窗口回归配置
 
-扩展模型沿用相同的准备、冻结和最终测试生命周期。H01/H02/H03 任务名为 `sequence_modeling`，不使用监督目标列；N04/N06 是需要目标列的时序回归模型。序列列只参与分组、排序或构造输入窗口，不会作为观测特征自动加入模型。示例使用分组和时间戳构造 Gaussian HMM 配置：
+扩展模型沿用相同的准备、冻结和最终测试生命周期。H01/H02/H03 任务名为 `sequence_modeling`，不使用监督目标列；N04/N06/N07/N08/N09 是需要目标列的窗口回归模型。序列列只参与分组、排序或构造输入窗口，不会作为观测特征自动加入模型。示例使用分组和时间戳构造 Gaussian HMM 配置：
 
-`SplitConfig.seed` 决定数据划分。HMM 和深度模型的 `random_state` 可显式设为 0 到 `2**32-1` 的整数作为初始化 seed；未提供或为 `None` 时使用 `SplitConfig.seed`。实际使用的 seed 会写入拟合元数据和最终 refit provenance。批量搜索的 `random_state` 不作为搜索字段；它属于 job 配置，winner refit 沿用同一个有效 seed。
+`SplitConfig.seed` 决定数据划分。HMM 和深度模型的 `random_state` 可显式设为 0 到 `2**32-1` 的整数作为初始化随机种子；未提供或为 `None` 时使用 `SplitConfig.seed`。实际种子会写入拟合元数据和最终重拟合记录。批量搜索不把 `random_state` 作为搜索字段；它属于 job 配置，最终重拟合会沿用同一个有效种子。
 
 ```python
 from pyml_workbench import DatasetConfig, ExperimentConfig, SequenceConfig
@@ -93,17 +118,17 @@ freeze_experiment(session, expected_config=hmm_config)
 result = evaluate_test(session)
 ```
 
-HMM 搜索默认最大化 `log_likelihood_per_observation`；H03 从训练分区冻结类别编码表，验证中出现未见符号会被拒绝，测试阶段的未见符号会在最终计算时报告错误。N04/N06 通过 `SequenceConfig(window=..., horizon=...)` 构造每组内的滑动窗口；同一窗口映射会用于训练、验证、重拟合和测试。
+HMM 搜索默认最大化 `log_likelihood_per_observation`；H03 从训练分区冻结类别编码表，验证中出现未见符号会被拒绝，测试阶段的未见符号会在最终计算时报告错误。N04/N06/N07/N08/N09 通过 `SequenceConfig(window=..., horizon=...)` 构造每组内的滑动窗口；同一窗口映射会用于训练、验证、重拟合和测试。
 
 `SequenceConfig`、`SequencePlan` 和 `SequenceError` 在包根目录公开导出。准备函数可自动建立并持有计划；若手动预构建 `DatasetSnapshot`，则须同时传入与它验证绑定的 `SequencePlan`。搜索队列会将计划与快照一起持久化，暂停恢复不重新读取源文件。
 
-H01/H02/H03 需安装 `pyml-workbench[sequence]`，N01/N02/N04/N06 需安装 `pyml-workbench[deep]`。缺少对应可选依赖时，模型仍保留在目录中，但实际准备或拟合会给出明确的 extra 安装提示。
+H01/H02/H03 需安装 `pyml-workbench[sequence]`，N01/N02/N04/N06/N07/N08/N09 需安装 `pyml-workbench[deep]`。缺少对应可选依赖时，模型仍可列在目录中，但实际准备或拟合会报告相应的依赖问题。
 
 ## 基础图表模块
 
 桌面端在“分析”菜单中提供完整数据概况和基础图表选择器；批量窗口可为已完成 job 绘制缓存结果。结果来源由应用按 session/job 所有权、分区、结果行绘图清单和持久回执校验。单任务 session 需要自己的绘图清单；批量 winner 清单核验 train/validation，final-session 独立清单与测试回执共同核验 test。若批量 winner 清单有效但旧 final-session 缺少独立清单，train/validation 仍可绘制，test 不可用；缺 winner 清单则该 job 没有结果图来源。应用不会为了绘图自动补清单、重新训练、搜索或测试。用户操作与图表类型见[用户指南](user-guide.md#数据概况与基础图表)和[批量搜索指南](batch-guide.md#桌面操作入口)。
 
-需要在 Python 中直接构造不可变的图表 payload 时，可从 `pyml_workbench.plotting` 导入类型与函数；这些符号不从 `pyml_workbench` 根目录重导出。payload builder 不读取文件、不调用模型，也不导入 Matplotlib。Matplotlib 只在调用 renderer 时导入：
+需要在 Python 中直接构造不可变的图表数据包时，可从 `pyml_workbench.plotting` 导入类型与函数；这些符号不从 `pyml_workbench` 根目录重导出。数据包构造函数不读取文件、不调用模型，也不导入 Matplotlib。只有调用绘图函数时才会导入 Matplotlib：
 
 ```python
 from pyml_workbench.plotting import (
@@ -124,10 +149,10 @@ source = PlotSource(
 )
 spec = next(spec for spec in available_plot_specs(source) if spec.kind == PlotKind.HISTOGRAM)
 payload = build_plot_payload(source, spec)
-figure = render_plot_payload(payload)  # Figure; 可调用 figure.savefig(...)
+figure = render_plot_payload(payload)  # Figure；可调用 figure.savefig(...)
 ```
 
-`PlotSource` 的列值按 `row_positions` 对齐。`available_plot_specs` 只返回该来源具有必要字段的 allowlist 图表；类别身份保持类型区分，非有限数值会按图表规则排除。`render_plot_payload(payload, figure=...)` 可渲染到调用方提供的 `matplotlib.figure.Figure`，不依赖 pyplot 的当前图状态。桌面图窗由 `desktop` extra 提供，并可保存当前图为 PNG 或 SVG。
+`PlotSource` 的列值按 `row_positions` 对齐。`available_plot_specs` 只返回该数据来源具备必要字段的允许图表；类别身份保持类型区分，非有限数值会按图表规则排除。`render_plot_payload(payload, figure=...)` 可绘制到调用方提供的 `matplotlib.figure.Figure`，不依赖 pyplot 的当前图状态。桌面图窗由 `desktop` extra 提供，并支持将当前图保存为 PNG 或 SVG。
 
 ## 一步完成的便捷接口
 
@@ -193,13 +218,13 @@ manual_spec = SearchSpec(
 )
 ```
 
-Grid, random, and annealing use the base scientific stack. TPE requires the optional Optuna package and genetic search requires optional pymoo; install `pyml-workbench[search]` or use `uv sync --extra search`. HMM and deep models additionally require their respective `sequence` and `deep` extras. If an optional model dependency is absent, its catalog entry remains listed and the attempted run reports the missing extra before fitting. Each job is capped at 50 actual fits, 250 proposals, and 20 active minutes; the batch has one worker by default and supports at most two, each limited to one numeric thread.
+网格、随机搜索与退火使用基础科学计算依赖。TPE 需要 Optuna，遗传搜索需要 pymoo；可安装 `pyml-workbench[search]` 或运行 `uv sync --extra search`。HMM 和深度模型还需各自的 `sequence` 与 `deep` extras。缺少可选依赖时，模型目录中仍可能显示相应条目，但执行时会报告依赖问题。每个 job 的搜索预算上限为 50 个预算单位、250 次提案和 20 分钟活动时间；预算单位与模型拟合数的关系取决于交叉验证路径：独立 `split.strategy="kfold"` 按候选计数，`evaluation` 按每个候选的一次主拟合加折数计数。队列默认一个 worker、最多两个，每个 worker 使用一个数值线程。
 
 ## 模型目录、保存与能力
 
-- `list_models(task=None, include_deferred=False)` 默认返回 78 个可运行目录条目，其中包括 71 个传统 estimator 和 7 个扩展模型。传任务名可筛选；`include_deferred=True` 只会额外列出未来添加的未实现条目。
+- `list_models(task=None, include_deferred=False)` 默认返回 111 个模型目录条目。传任务名可筛选；`include_deferred=True` 还会列出暂未实现的目录条目（如当前版本提供）。条目数量不表示所有模型依赖都已安装或已完成拟合测试。
 - `parameter_schema(model_id)` 返回模型参数名、当前 schema 默认值和类型。`build_estimator(model_id, parameters=None, seed=42)` 用于传统 scikit-learn estimator；HMM 和神经网络须通过 `prepare_experiment` 或搜索/批量 API 构建。
 - 拟合模型 `FittedModel` 保留预处理器、特征列、配置快照和方法能力。`load_model(path)` 接受模型文件或输出目录。`predict(model, values)` 与 `transform(model, values)` 尊重拟合后的方法能力和特征列。
 - LOF (A03) 默认 `novelty=False`，其新数据 `predict`、`decision_function` 和 `score_samples` 不可用；要为新行开启这些方法，拟合时设置 `novelty=True`。SVC (C07) 默认 `probability=False`，需要概率输出时在拟合前开启。
 
-其他公开函数包括 `get_model`、`model_capabilities`、`load_dataset`、`preview_dataset`、`select_features_target` 和错误类型 `ConfigError`、`DatasetError`、`MissingTargetError`、`SplitError`、`ExperimentError`、`ArtifactError`、`UnsupportedOperationError`。扩展模型的配置字段见[序列建模指南](sequence-guide.md)和[深度学习指南](deep-learning-guide.md)；完整 78 项目录见[模型索引](model-index.md)。
+其他公开函数包括 `get_model`、`model_capabilities`、`load_dataset`、`preview_dataset`、`select_features_target` 和错误类型 `ConfigError`、`DatasetError`、`MissingTargetError`、`SplitError`、`ExperimentError`、`ArtifactError`、`UnsupportedOperationError`。扩展模型的配置字段见[序列建模指南](sequence-guide.md)和[深度学习指南](deep-learning-guide.md)；目录和参数见[模型索引](model-index.md)。

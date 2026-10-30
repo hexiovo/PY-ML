@@ -96,6 +96,26 @@ class SettingsGuiTests(unittest.TestCase):
         self.assertEqual(self.source.read_bytes(), original)
         self.assertEqual(self.window._configuration_path, self.source)
 
+    def test_cv_and_reduction_roundtrip_and_switch_back_to_holdout(self):
+        from dataclasses import replace
+        from pyml_workbench.config import SplitConfig
+        cfg = replace(self.config, split=SplitConfig(strategy="kfold", n_splits=3),
+                      reduction_method="pca", reduction_components=1)
+        self.assertTrue(self.window.apply_experiment_config(cfg))
+        self.assertEqual(self.window.build_experiment_config().to_dict(), cfg.to_dict())
+        self.window.evaluation_method_combo.setCurrentIndex(
+            self.window.evaluation_method_combo.findData("holdout"))
+        self.assertNotEqual(self.window.build_experiment_config().split.strategy, "kfold")
+
+    def test_structural_evaluation_roundtrip(self):
+        from dataclasses import replace
+        from pyml_workbench.config import SplitConfig, EvaluationConfig
+        cfg = replace(self.config, split=SplitConfig(strategy="time"),
+                      evaluation=EvaluationConfig(folds=3),
+                      reduction_method="pca", reduction_components=1)
+        self.assertTrue(self.window.apply_experiment_config(cfg))
+        self.assertEqual(self.window.build_experiment_config().to_dict(), cfg.to_dict())
+
     def test_actions_follow_existing_editability_rules(self):
         self.assertFalse(self.window.save_changes_action.isEnabled())
         self.assertTrue(self.window.load_config_action.isEnabled())

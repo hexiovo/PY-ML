@@ -52,6 +52,11 @@ class PlotDialog(QDialog):
         self.chart_selector.setObjectName("plotChartSelector")
         for payload in self._payloads:
             self.chart_selector.addItem(payload.title or payload.spec.display_title)
+            self.chart_selector.setItemData(
+                self.chart_selector.count() - 1,
+                payload.title or payload.spec.display_title,
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self.chart_selector.setVisible(len(self._payloads) > 1)
         controls.addWidget(self.chart_selector, 1)
         outer_layout.addLayout(controls)
@@ -124,6 +129,7 @@ class PlotDialog(QDialog):
         if figure is None:
             return
         render_plot_payload(payload, figure=figure)
+        self._canvas.setToolTip(payload.title or payload.spec.display_title)
         self.effective_count_label.setText(
             f"{payload.partition}：总计 {payload.partition_count}，有效 {payload.effective_count}，"
             f"排除 {payload.excluded_count}，抽样 {payload.sampled_count}"

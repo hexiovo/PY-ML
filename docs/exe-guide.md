@@ -1,68 +1,51 @@
-# Windows EXE 使用与重建
+# Windows 版下载、运行与安装
 
-## 使用
+## 下载和启动
 
-2026-10-27 新构建的完整扩展版：`dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip`。完整解压后双击 `PYML-Workbench.exe`，本机目录为 `dist/model-expansion-20261027/PYML-Workbench-full`。包含 111 个目录模型及本轮新增指标、融合/时序/深度模型、分组/时间划分和折评估。必须保留 `PYML-Worker.exe`、`_internal` 与全部子文件，无需安装 Python。旧发行和已安装目录未替换。
+从 [GitHub 最新 Release](https://github.com/hexiovo/PY-ML/releases/latest) 下载 Windows x64 完整程序包。Release 页面里的 **Code → Download ZIP** 是源码，不是 Windows 程序。
 
-本轮使用 full profile，包含三个提升树 SDK、HMM、PyTorch/skorch、UMAP、statsmodels 和全部搜索后端。详细模型 ID、指标定义与限制见[扩展指南](model-expansion.md)。PDF 继续作为先前界面的图文参考，本轮新增设置以当前离线 Markdown 指南为准。
+1. 把完整 ZIP 解压到一个有写入权限的目录；路径可以包含中文。
+2. 双击 `Start.cmd` 启动工作台。
+3. 若希望安装到当前 Windows 用户的应用目录，双击 `Install.cmd`。它会安装到版本化的 `%LOCALAPPDATA%` 目录，不需要管理员权限。
 
-以下段落保留先前标准版的历史使用和验证说明。
+程序包自带所需的 Python 运行环境。运行时要保留完整目录结构，包括 `PYML-Workbench.exe`、`PYML-Worker.exe`、`_internal`、`skills` 和文档；不要只复制主程序，也不要单独移动后台程序或 `_internal`。便携运行可直接保留解压目录；用户级安装由 `Install.cmd` 管理。
 
-将 `PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip` 解压到本地文件夹，双击 `PYML-Workbench.exe`。本机程序目录为 `dist/ui-polish-20261008/PYML-Workbench-standard`，也可使用 `F:/桌面/程序/APP/PY-ML 机器学习工作台.exe` 入口。程序包含 Python 和标准版运行依赖，目标电脑无需安装 Python。
-
-启动时显示按当前屏幕 DPI 绘制的提示和动画加载条，主窗口准备好后自动关闭。底部青绿色“操作指南”按钮、帮助菜单和 F1 打开同一离线指南，命令以代码块显示。顶部菜单与嵌套子菜单支持悬停展开；不可用项置灰。点击“帮助 → 联系（GitHub Issue）”打开项目的新建 Issue 页面。
-
-此版本包含单任务与批量断点恢复和安全退出。已完成步骤与设置自动保存在用户数据目录；启动后由用户选择恢复或新建。被中断的步骤会从头重做，不从内部迭代继续。
-
-启动时先显示“正在开启程序中…”，初始化完成后提示会自动关闭并进入主窗口。首次启动耗时受磁盘和系统扫描影响，看到提示后请稍候。
-
-底部“操作指南”按钮、帮助菜单或 F1 可打开离线指南，支持目录跳转和搜索；同文档位于 `docs/overall-guide.md`。
-
-首次解压后启动可能较慢：本机首次复制启动测得约 38 秒，后续约 3 秒。请等待主窗口出现；维护启动检查允许 60 秒，不把原 30 秒时限当成应用启动失败。
-
-必须保留 `PYML-Worker.exe`、`_internal` 和其子文件；不能只复制主 EXE。标准版包含 Qt 与 71 个 scikit-learn 模型，不包含提升树 SDK、HMM、深度学习、TPE 或遗传搜索的可选依赖。结果、日志、设置按既有应用规则保存，不写入 `_internal`。
-
-使用方法继续见[用户指南](user-guide.md)。程序出现错误时复制错误编号，或通过“文件 → 导出诊断包…”保存本地诊断材料。
-
-## 重建
-
-构建使用 **Python 3.12.14 x64**；不要用 3.12.0，其字节码 `code.replace` 缺陷会导致 SciPy 在冻结后导入失败。已有项目环境不必替换，可下载独立构建运行时并通过 `PYTHONPATH` 复用同一 Python 3.12 ABI 的已安装依赖。构建工具只用于开发，不是应用运行依赖。使用 non-editable 包安装以保证发行元数据匹配源码版本。
+每个 Release 附有 SHA-256 校验文件。下载后可在 PowerShell 中用以下命令核对 ZIP，文件名按实际下载的附件填写：
 
 ```powershell
-uv pip install --python .venv/Scripts/python.exe -r packaging/build-requirements.txt hatchling
-uv pip install --python .venv/Scripts/python.exe --no-deps --no-build-isolation .
-uv python install 3.12.14 --install-dir delivery/exe-0.4.1/python-runtime --no-bin --no-registry
-$env:PYTHONPATH=(Resolve-Path .venv/Lib/site-packages).Path
-& .\delivery\exe-0.4.1\python-runtime\cpython-3.12.14-windows-x86_64-none\python.exe -X utf8 -m PyInstaller --noconfirm --workpath delivery/exe-0.4.1/build-py31214 --distpath dist packaging/workbench.spec
+Get-FileHash .\<发行包文件名>.zip -Algorithm SHA256
 ```
 
-入口和 spec 收集动态算法模块、搜索/HMM/deep 后端、模型目录、发行元数据、Qt 平台插件和 Matplotlib 图形后端。主程序使用 windowed 子系统，后台使用 console 子系统以保留 QProcess 管道；两者共享同一 `_internal`。运行时钩子保持计算核心先于 Qt 的导入顺序；计算后台跳过 Qt 初始化。
+将结果与 Release 提供的校验值比较。校验文件中的散列值只标识对应附件；如果文件名或散列不一致，请重新下载。
 
-## 验证范围
+## 检查运行环境
 
-2026-10-07 断点恢复标准版：GUI/worker 的 11 个应用模块各自与当前源码比对，22 项检查通过；两个 EXE 均确认排除了 profile 中的 9 个可选包。实际 GUI EXE 在中文临时目录和仅系统 PATH 下启动；源码 Qt 控制器驱动实际 worker 完成单任务训练、冻结、一次测试、导出和一次批量拟合；另执行了实际 frozen C19 训练。检查使用隔离用户数据目录，没有重跑全部模型或此前已通过的 500 次迭代恢复验证。记录位于 `delivery/exe-0.4.4/checkpoint-20261007`。
+打开“帮助 → 检查运行环境…”，工作台会检查 Python、依赖版本、导入结果、后台程序和所需资源，并区分必需组件与可选算法。检查过程不会开始训练或转换数据。
 
-0.4.2 记录位于 `delivery/exe-0.4.2`，包括指南/相关 Qt 回归、资源一致性、最小窗口预览、GUI/worker 嵌入代码与源码比对、实际主 EXE 的 F1 离线指南入口，以及 ZIP 文件校验和外部中文路径解压启动。首次启动检查超时及诊断记录也保留，详情见 `version.md`。下面的计算生命周期记录来自 0.4.1，0.4.2 未重跑未受影响的全部模型。
+缺少 Python 依赖时，可在检查窗口使用“一键安装”。安装使用当前 Windows 用户的专用目录；只有后台加载校验通过后，新环境才会启用。安装结束会再次检查。成功后按提示重启工作台；安装或校验失败时，现有可用环境会保留。
 
-实际验证记录位于 `delivery/exe-0.4.1`：主 EXE 在无 Python 路径、仅系统 PATH 和外部中文工作目录中启动并显示中文主窗口；开发 Qt 控制器驱动实际 frozen worker 完成单任务训练、冻结、一次测试、自动导出与批量搜索。C01、H01、N01、N06 的实际 frozen 生命周期、缓存测试和重载检查共 26 个子步骤通过；最终构建对受影响的 GUI、五种搜索和错误日志关联作了复验，没有重复那 26 个未受影响步骤。详细失败、更正和验证范围见根目录 `version.md`。
+如果检查报告指出程序文件或 `_internal` 缺失，请重新完整解压 Windows 发行包；一键安装只处理依赖，不会补回被移动或删除的程序文件。HyperEEG、PYfNIRs 等转换插件独立发布，也不由依赖安装器代为下载。
 
-本次在 Windows 11 x64 本机验证，未在干净虚拟机或其他 Windows 版本验证，未重新拟合全部 78 个模型。程序使用 Windows 自带的 ICU，排除了构建机其他工具链的同名冲突 DLL。深度模型使用 CPU。
+## 配置数据转换插件
 
-维护用检查命令（控制器需要项目开发环境；最终用户运行 EXE 不需要）：
+HyperEEG 与 PYfNIRs 可在“格式 → 数据转换”中使用。选择“插件设置…”后，分别指定对应插件的发行目录。目录须包含 `pyml-plugin.json`；保存后，工作台检查插件清单并启用通过检查的入口。未配置或路径失效时，相关入口保持不可用；有效设置会在重新启动后恢复。
 
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -B packaging/smoke_worker.py dist/PYML-Workbench delivery/exe-0.4.1/worker-smoke
-.\.venv\Scripts\python.exe -X utf8 -B packaging/smoke_gui.py dist/PYML-Workbench delivery/exe-0.4.1/gui-smoke
-```
+两个转换器不包含在 PY-ML 主程序包中。请从[转换插件仓库](https://github.com/hexiovo/PY-ML_support_trans)下载相应发行文件。插件设置只登记本机插件目录，不会下载或安装转换器。
 
-最终 ZIP 附整个程序目录及文档/许可文本，目录内 `SHA256SUMS.txt` 校验每个文件，`dist/SHA256SUMS.txt` 校验主/后台 EXE 和 ZIP。运行 `packaging/release.py` 可从已验证的完整目录生成 ZIP；该脚本拒绝覆盖同名 ZIP。
+## 使用实验配置技能
 
-## 本轮构建与产物（2026-10-27）
+完整程序包的 `skills/pyml-study-config/` 目录包含技能入口、参考资料、检查脚本和合成示例。Release 还提供单独的技能 ZIP 和单文件便携版。
 
-构建命令使用 Python 3.12.14，输出目录、ZIP 与中间目录均单独命名：
+- 在兼容 Codex 技能的 AI 中，将 `pyml-study-config` 文件夹复制到 `%USERPROFILE%\.codex\skills\` 下，之后在新的 AI 会话中调用该技能。
+- 在支持上传文件的其他 AI 中，可上传完整技能 ZIP；便携 Markdown 适合只能接收单文件的场景。
+- 完整 ZIP 内带有辅助脚本；便携 Markdown 包含指令和参考资料，但不带脚本。没有文件或运行工具的 AI 不能声称已经生成并验证了可执行文件。
 
-```powershell
-.\.venv\Scripts\python.exe -X utf8 packaging/build_release.py --profile full --release-dir D:\program\PYML\main\dist\model-expansion-20261027\PYML-Workbench-full --archive-path D:\program\PYML\main\dist\PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip --work-dir D:\program\PYML\main\build\model-expansion-20261027
-```
+技能可以把实验设计整理成配置、数据准备脚本和统计分析脚本。它会标明未知信息和实际检查范围，不替研究者猜测测量单位、独立统计单位或科学假设，也不会因生成配置而自动运行完整分析。
 
-可用 `packaging/verify_frozen_sources.py` 比对所有内嵌应用模块；`packaging/smoke_expansion.py` 针对 27 个新增模型和 6 个提升树模型运行真实 EXE；`packaging/verify_zip.py --archive <ZIP绝对路径> --evidence <检查目录>` 支持命名 profile 包的逐文件 SHA-256/CRC 及中文路径解压启动检查。所有 GUI 启动检查使用临时 APPDATA，避免读取用户已有恢复设置。最终实测结果见 `version.md` 和 `output/verification/exe-model-expansion-result.json`。
+## 继续阅读
+
+- [完整操作指南](overall-guide.md)
+- [单任务用户指南](user-guide.md)
+- [批量搜索指南](batch-guide.md)
+- [PYML 实验配置技能](../skills/pyml-study-config/SKILL.md)
+- [开发指南](development.md)

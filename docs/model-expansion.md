@@ -1,6 +1,6 @@
-# 指标、算法与验证扩展（2026-10-27）
+# 模型、指标与验证方式
 
-本轮源码目录从 84 项扩展到 **111 项**。当前 Python 环境可运行全部可选依赖；本轮完整扩展版 EXE 已单独构建，历史 Windows EXE 保留。基础安装提供 90 项，其余按 extra 启用。模型目录和参数见 [模型索引](model-index.md)。
+PY-ML 当前模型目录包含 **111 个条目**。条目数量不表示所有模型都已在全部依赖、参数和数据条件下完成拟合验证。可用能力取决于所选模型、输入结构和运行环境；参数目录见[模型索引](model-index.md)，Windows 部署见[下载与安装指南](exe-guide.md)。
 
 ## 新增模型
 
@@ -44,33 +44,32 @@ ROC-AUC/AP/PR-AUC 可以使用真实概率或语义明确的决策分数。Log L
 
 MAPE 使用比例单位；含零或机器精度附近目标时返回 null。sMAPE 使用 0–200 的百分比单位，双方均为零时该项贡献为零。MSLE/RMSLE 要求真实值和预测值非负。分位数损失默认使用 0.5；支持的分位数模型使用实际拟合分位数。MASE 分母仅从训练目标的朴素或季节朴素误差计算，按组分段，不跨组作差；常量或不足的训练序列返回 null。缺少类别、概率、参考标签或不符合定义域时，相应指标为 null，并在 `metric_notes` 中说明原因。
 
-## 界面配置与搜索目标
+## 指标与搜索目标
 
-“算法与评价”页的搜索目标下拉框可选择与任务兼容的指标；最大化/最小化方向自动确定。勾选的展示指标用于图表与导出。单任务结果 JSON 包含逐类结果、指标说明和交叉验证明细；指标图支持交叉验证均值。
+分类、回归、聚类、降维和异常检测可用的指标取决于模型实际提供的预测或表示能力及指标定义域。Log Loss、Brier 等概率指标要求真实概率；ROC-AUC/AP 可使用概率或语义明确的决策分数。二分类正类和多分类平均方式须按结果中的类别顺序解释。缺少概率、类别或独立参考标签时，相应指标可能为空，并附原因。逐项定义见下文和结果文件中的 `metric_notes`。
 
-模型参数下方的“划分与评价 JSON”默认 `{}`，可配置：
+搜索目标应与研究任务相符。默认方向由指标决定；异常检测自动搜索必须提供独立真实标签和明确映射，不能把模型自身异常预测当作真值。预测指标用于模型选择和预测性能报告，不能代替研究假设的推断检验。
 
-```json
-{
-  "split":{"strategy":"group","group_column":"subject_id"},
-  "cross_validation":{"folds":5,"strategy":"group","gap":0},
-  "reference_labels_column":"reference_label"
-}
-```
+## 数据划分与交叉验证
 
-这三个顶层字段均可省略。分类/回归一般不需要 `reference_labels_column`；它专供聚类或异常检测的独立标签。分组、时间和参考标签列会从自动特征选择中排除。异常搜索若源标签不是 `-1/+1`，在高级批量 `objective.label_mapping` 中显式映射。
+原生 `ExperimentConfig` 用 `split` 表示外层数据划分，用 `evaluation` 表示留出流程上附加的交叉验证；独立参考标签列是 `dataset.reference_labels_column`。`DatasetConfig` 不提供任意数据转换图、编码/分隔符或统计分析字段。外部步骤必须保存在独立的数据准备和统计计划中。
 
-`split.strategy` 支持：
+留出比例固定为 60/20/20。`split.strategy` 支持 `random`、`holdout`、`group`、`time` 和兼容的 `kfold` 路径：
 
-- `random`：默认原有分层分类 / 随机回归 60/20/20 划分，保持旧配置摘要兼容。
-- `group`：整组划分，组不跨训练/验证/测试；至少 5 组，比例按组近似 60/20/20。
-- `time`：按 `time_column` 递增划分，未指定时按源行顺序；指定时间列必须无缺失、无重复。
+- `random` / `holdout`：随机留出，分类按类别分层，回归按行随机。
+- `group`：按整组划分，至少 5 个非缺失组；组大小不同会使行比例近似而非精确。分组列不得成为特征。
+- `time`：按唯一、非缺失时间升序划分；若未提供时间列，则使用源行顺序。外层 group 与 time 不能同时启用。
+- `kfold`：普通表格分类/回归的独立 K 折路线，`split.n_splits` 为 2–10，先留出 20% 独立测试，再在其余开发集上做折验证。不能同时设置 `evaluation`；HMM、窗口序列、传统时序预测及无监督任务不支持此路线。
 
-`cross_validation` 支持 2–10 折，`strategy` 为 `auto`、`stratified`、`kfold`、`group` 或 `time`。`auto` 沿用分组/时间隔离，普通分类用分层折，回归用 KFold。滚动折可用 `gap` 留出间隔。分组/滚动验证必须配合相同类型的外层划分。
+`evaluation` 可配置 `folds`（2–10）、`strategy`（`auto`、`stratified`、`kfold`、`group`、`time`）和非负整数 `gap`。它在原训练+验证的 80% 开发分区中评估，最终 test 保留。`auto` 沿用外层 group/time 结构；普通分类用分层折，回归用 KFold。Group/time 折需要匹配的外层分区。时间 `gap` 只适用于相应的折验证，不代表最终测试的 purge/embargo。每折的填补、缩放、编码和可选降维均只在该折训练行拟合。
 
-折评估在原训练+验证的 80% 开发分区内执行，每折独立拟合预处理；最终 20% 测试集保持保留。启用后，搜索使用折均值，记录标准差和逐折行位置；单个训练/验证模型的结果仍单独保留。每个候选消耗“1 次主模型 + 折数”的实际拟合预算，启动前必须有足够额度。模型内部的树、Bagging 成员和 Stacking 内部拟合属于一个模型训练操作；预算计数覆盖主模型及显式外层验证折。中断时沿用整候选重做的恢复策略，旧尝试保留在事件记录中。
+两种 CV 路线的预算口径不同：独立 `split.strategy="kfold"` 中 `max_fits` 按候选计数，底层每个候选会在多个折上拟合；`evaluation` 路线中 `max_fits` 按模型拟合次数计数，每个候选通常消耗 1 次主拟合加折数。冻结后的重拟合和唯一最终测试另行执行。请在批量搜索的预算说明中核对当前设置，不能把候选上限直接称为底层模型拟合总数。
 
-折评估支持普通表格分类/回归及 T01–T05。HMM 和窗口神经模型使用已有的 SequencePlan 分区、验证与早停流程，不能配置普通表格折评估。不同划分或折设置的任务不会放入同一批量比较组。
+## 原生预处理和降维
+
+普通表格数值列使用训练数据拟合的缺失值填补与缩放；类别列使用训练数据拟合的填补和 one-hot 编码。CategoricalNB 还会进行训练内分箱。学习参数仅从允许的训练分区估计；折验证时每折重新拟合。
+
+原生可选训练前降维字段为旧版 `pca_components`，或成对出现的 `reduction_method` 与 `reduction_components`。方法包括 PCA、TruncatedSVD、FastICA、Gaussian Random Projection 和 Kernel PCA。降维接在普通特征预处理后，按主训练分区或 CV 训练折拟合。有效秩、样本数和模型兼容条件由运行时校验；如需单位换算、reshape/merge、量表合成、目标变换、SMOTE、目标编码等，必须用独立脚本在划分约束下实现。降维不能与要求非负输入的 MultinomialNB/ComplementNB、CategoricalNB 或部分序列/原始特征模型任意组合。
 
 ## 传统时序与窗口深度模型
 
@@ -87,18 +86,18 @@ N07/N08/N09 延用 N04/N06 的窗口配置，例如 `{"window":10,"horizon":3}`�
 ## Python 配置示例
 
 ```python
-from pyml_workbench import DatasetConfig, ExperimentConfig, EvaluationConfig, ObjectiveSpec, SplitConfig
+from pyml_workbench import DatasetConfig, ExperimentConfig, EvaluationConfig, ObjectiveSpec
 
 config = ExperimentConfig(
     dataset=DatasetConfig("data.csv", target_column="y", feature_columns=("x1", "x2")),
     task="classification",
-    model_id="C30",
+    model_id="C01",
     evaluation=EvaluationConfig(folds=5),
 )
-objective = ObjectiveSpec(metric="log_loss")  # 自动选择 min
+objective = ObjectiveSpec(metric="balanced_accuracy")  # 自动选择 max
 ```
 
-高级批量数据项可填写 `split`、`evaluation`、`reference_labels_column` 和 `objective`，其余队列、冻结和最终测试操作沿用原流程。
+`reference_labels_column` 属于 `DatasetConfig`，用于聚类或异常检测的独立参考标签。搜索配置另用 `ObjectiveSpec`。批量入队、冻结和最终测试步骤见[批量搜索指南](batch-guide.md)；不要把外部预处理或统计计划字段加进原生实验配置。
 
 依赖同步（保留环境中其它工具）：
 
@@ -106,8 +105,4 @@ objective = ObjectiveSpec(metric="log_loss")  # 自动选择 min
 uv sync --locked --inexact --no-editable --no-dev --extra desktop --extra search --extra sequence --extra deep --extra manifold --extra forecasting --extra xgboost --extra lightgbm --extra catboost
 ```
 
-`manifold` 锁定 umap-learn 0.5.12，`forecasting` 锁定 statsmodels 0.15.0；未安装时界面显示对应 extra，应用不会自动安装。当前 `standard` 构建配置提供 90 个基础模型，`full` 配置包含全部可选扩展；本轮源码修改本身不代表已重新构建或验证 EXE。
-
-## 本轮 EXE
-
-完整解压 `dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip` 后运行 `PYML-Workbench.exe`。本机新目录为 `dist/model-expansion-20261027/PYML-Workbench-full`，包含本页列出的可选依赖；旧安装目录不变。发行与验证范围见[EXE 指南](exe-guide.md)。
+`manifold` 使用 umap-learn，`forecasting` 使用 statsmodels；可选依赖未安装或不可用时，模型条目仍可见，运行前会报告对应原因。Windows 程序的下载入口是 [GitHub 最新 Release](https://github.com/hexiovo/PY-ML/releases/latest)。

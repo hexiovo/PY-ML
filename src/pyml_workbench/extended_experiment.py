@@ -39,7 +39,12 @@ from .experiment import (
     _regression_metrics,
     _result_rows,
 )
-from .preprocessing import CategoricalStringifier
+from .preprocessing import (
+    CategoricalStringifier,
+    _resolve_reduction_settings,
+    append_reducer,
+    fit_transform_preprocessor,
+)
 from .sequence import SequenceError, SequencePlan, _json_text, _normal_scalar
 from .sequence_models import (
     DEEP_MODEL_IDS,
@@ -251,7 +256,15 @@ def prepare_extended_experiment(
     elif config.model_id in WINDOW_DEEP_MODEL_IDS:
         assert sequence_plan is not None
         fit_rows = _fit_source_rows(sequence_plan, fit_scope)
-        preprocessor, preprocessing = _fit_preprocessor(snapshot.features, fit_rows)
+        preprocessor, preprocessing = _fit_preprocessor(
+            snapshot.features,
+            fit_rows,
+            pca_components=config.pca_components,
+            reduction_method=config.reduction_method,
+            reduction_components=config.reduction_components,
+            seed=config.split.seed,
+            fit_scope=fit_scope,
+        )
         train_x, train_y = _window_arrays(sequence_plan.train, preprocessor, feature_columns, name="train")
         if fit_scope == "train":
             validation_x, validation_y = _window_arrays(sequence_plan.validation, preprocessor, feature_columns, name="validation")
@@ -350,7 +363,15 @@ def prepare_extended_experiment(
                 categorical_alphabet=None,
                 effective_training_seed=effective_training_seed,
             )
-        preprocessor, preprocessing = _fit_preprocessor(snapshot.features, train_rows if fit_scope == "train" else np.concatenate([actual_splits["train"], actual_splits["validation"]]))
+        preprocessor, preprocessing = _fit_preprocessor(
+            snapshot.features,
+            train_rows if fit_scope == "train" else np.concatenate([actual_splits["train"], actual_splits["validation"]]),
+            pca_components=config.pca_components,
+            reduction_method=config.reduction_method,
+            reduction_components=config.reduction_components,
+            seed=config.split.seed,
+            fit_scope=fit_scope,
+        )
         train_x = _transform_frame(preprocessor, snapshot.features.iloc[train_rows], name="train")
         if config.model_id == "N01":
             train_y = _encode_labels(snapshot.target.iloc[train_rows], class_mapping, context="train")
@@ -769,7 +790,16 @@ def _validate_model_task(model_id: str, task: str) -> None:
         raise ExtendedExperimentError(f"{model_id} requires task={expected!r}, received {task!r}")
 
 
-def _fit_preprocessor(features: pd.DataFrame, fit_positions: np.ndarray) -> tuple[Any, dict[str, Any]]:
+def _fit_preprocessor(
+    features: pd.DataFrame,
+    fit_positions: np.ndarray,
+    *,
+    pca_components: int | None = None,
+    reduction_method: str | None = None,
+    reduction_components: int | None = None,
+    seed: int = 42,
+    fit_scope: str = "train",
+) -> tuple[Any, dict[str, Any]]:
     train = features.iloc[np.asarray(fit_positions, dtype=np.int64)].copy(deep=True)
     if train.empty:
         raise ExtendedExperimentError("The allowed training partition for preprocessing is empty")
@@ -806,7 +836,22 @@ def _fit_preprocessor(features: pd.DataFrame, fit_positions: np.ndarray) -> tupl
         raise DatasetError("No supported train-only numeric or categorical features were selected")
     preprocessor = ColumnTransformer(transformers, remainder="drop", sparse_threshold=0.0, verbose_feature_names_out=False)
     try:
-        preprocessor.fit(train)
+        method, components = _resolve_reduction_settings(
+            pca_components=pca_components,
+            reduction_method=reduction_method,
+            reduction_components=reduction_components,
+        )
+        preprocessor = append_reducer(
+            preprocessor,
+            method,
+            components,
+            seed=seed,
+        )
+        _, reduction_metadata = fit_transform_preprocessor(
+            preprocessor,
+            train,
+            fit_scope=fit_scope,
+        )
     except (TypeError, ValueError) as exc:
         raise ExtendedExperimentError(f"Train-only feature preprocessing failed: {exc}") from exc
     details = {
@@ -815,7 +860,11 @@ def _fit_preprocessor(features: pd.DataFrame, fit_positions: np.ndarray) -> tupl
         "numeric_scaler": "standard",
         "fit_policy": "fit on permitted training source rows only",
         "input_adapter": "numeric median imputation and standardization; train-only one-hot categories",
+        "fit_row_count": int(len(fit_positions)),
+        "fit_scope": fit_scope,
     }
+    if reduction_metadata is not None:
+        details["reduction"] = reduction_metadata
     return preprocessor, details
 
 

@@ -13,11 +13,17 @@ htmlcov/
 
 # Builds, delivered binaries, and local validation runs
 /build/
-/tmp/pdfs/
+/tmp/
 /delivery/
 /RUN/
-/dist/*
-!/dist/SHA256SUMS.txt
+/dist/
+/output/
+/.property-tests/
+implementation-plan*.md
+packaging/plan.txt
+packaging/guide-plan.txt
+/cleanup-old-files.cmd
+/cleanup-old-files.ps1
 
 # Local datasets, experiment state, and logs
 /data/

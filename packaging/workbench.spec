@@ -8,6 +8,8 @@ if sys.version_info[:3] == (3, 12, 0):
     raise SystemExit('Do not build with Python 3.12.0: code.replace corrupts inlined-comprehension locals. Use Python 3.12.14.')
 
 root = Path(SPECPATH).parent
+sys.path.insert(0, str(root / "packaging"))
+from installer_runtime import installer_runtime_datas
 profile_config = json.loads((root / 'packaging/profiles.json').read_text(encoding='utf-8'))
 profile_name = os.environ.get('PYML_PACKAGE_PROFILE', profile_config['default_profile']).casefold()
 if profile_name not in profile_config['profiles']:
@@ -34,9 +36,11 @@ for package in profile['collect_submodules']:
     else:
         hidden += collect_submodules(package, filter=lambda name: '.tests' not in name)
 datas = collect_data_files('pyml_workbench')
+datas += installer_runtime_datas()
 # One source document is used by both the public docs and the offline viewer.
 datas += [(str(root / 'docs/overall-guide.md'), 'pyml_workbench/resources')]
 datas += [(str(root / 'docs/assets/guide-ui'), 'pyml_workbench/resources/assets/guide-ui')]
+datas += [(str(root / 'assets/icons/workbench-desktop.ico'), 'pyml_workbench/resources')]
 for package in ['pyml-workbench', *profile['runtime_distributions']]:
     datas += copy_metadata(package)
 a = Analysis([str(root / 'packaging/desktop_entry.py'), str(root / 'packaging/worker_entry.py')],
@@ -45,8 +49,7 @@ a = Analysis([str(root / 'packaging/desktop_entry.py'), str(root / 'packaging/wo
     runtime_hooks=[str(root / 'packaging/runtime_hook.py')],
     excludes=['tkinter', 'IPython', 'notebook', 'pytest', 'sphinx', *profile['exclude_modules']],
     noarchive=False)
-# Keep frozen application bytecode tied to this checkout. This is the same
-# source-provenance fix already present on origin/master (64f4a9f).
+# Compile application modules from this checkout before assembling the archive.
 from PyInstaller.config import CONF
 project_code_cache = CONF['code_cache'].setdefault(id(a.pure), {})
 for module_name, source_path, typecode in a.pure:
@@ -72,6 +75,7 @@ splash = CrispSplash(str(root / 'assets/startup/opening.png'), binaries=a.binari
     text_color='#475569', text_default='正在加载运行组件，请稍候…',
     always_on_top=True, center='active')
 gui = EXE(pyz, gui_scripts, splash, [], exclude_binaries=True, name='PYML-Workbench',
+    icon=str(root / 'assets/icons/workbench-desktop.ico'),
     manifest=str(root / 'packaging/gui.manifest'),
     debug=False, bootloader_ignore_signals=False, strip=False, upx=False, console=False)
 worker = EXE(pyz, worker_scripts, [], exclude_binaries=True, name='PYML-Worker',

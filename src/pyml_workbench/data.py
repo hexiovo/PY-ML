@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,120 @@ def _resolve_source(source: str | Path | DatasetConfig, sheet_name: str | int | 
     return Path(source), sheet_name
 
 
+def _preserve_identity_csv_token(value: str) -> Any:
+    """Keep identity tokens textual while retaining blank cells as missing."""
+    return pd.NA if value == "" else value
+
+
+def _restore_csv_integer_negative_zero(
+    frame: pd.DataFrame,
+    path: Path,
+    *,
+    encoding: str,
+    nrows: int | None,
+) -> pd.DataFrame:
+    """Restore negative-zero tokens lost by pandas integer inference.
+
+    Only integer columns that already contain zero are scanned. A bounded,
+    pandas-parsed read of those columns preserves CSV quoting and row alignment
+    without materializing a second string copy of the whole table.
+    """
+    if frame.empty:
+        return frame
+
+    frame_dtypes = frame.dtypes
+    candidate_columns = [
+        index
+        for index in range(frame.shape[1])
+        if pd.api.types.is_integer_dtype(frame_dtypes.iloc[index])
+        and bool(frame.iloc[:, index].eq(0).fillna(False).any())
+    ]
+    if not candidate_columns:
+        return frame
+
+    positions: list[tuple[int, int]] = []
+    rows_read = 0
+    with pd.read_csv(
+        path,
+        encoding=encoding,
+        usecols=candidate_columns,
+        dtype=str,
+        keep_default_na=False,
+        na_filter=False,
+        nrows=nrows,
+        chunksize=8192,
+    ) as chunks:
+        for chunk in chunks:
+            if chunk.shape[1] != len(candidate_columns):
+                raise DatasetError("CSV negative-zero scan selected an unexpected column count")
+            for token_column, frame_column in enumerate(candidate_columns):
+                for row_offset, raw_token in enumerate(chunk.iloc[:, token_column]):
+                    token = raw_token.strip()
+                    if len(token) > 1 and token[0] == "-" and all(
+                        character == "0" for character in token[1:]
+                    ):
+                        row_index = rows_read + row_offset
+                        if row_index >= len(frame) or frame.iat[row_index, frame_column] != 0:
+                            raise DatasetError("CSV negative-zero scan lost row alignment")
+                        positions.append((row_index, frame_column))
+            rows_read += len(chunk)
+
+    if rows_read != len(frame):
+        raise DatasetError("CSV negative-zero scan row count differs from the parsed table")
+    if not positions:
+        return frame
+
+    affected_columns = {column_index for _, column_index in positions}
+    for column_index in affected_columns:
+        column = frame.iloc[:, column_index]
+        safe_integers = all(abs(int(value)) <= 2**53 for value in column.dropna())
+        if safe_integers:
+            replacement = column.astype("Float64" if column.isna().any() else "float64")
+        else:
+            replacement = column.astype(object)
+        frame.isetitem(column_index, replacement)
+
+    for row_index, column_index in positions:
+        frame.iat[row_index, column_index] = -0.0
+    return frame
+
+
+def _restore_xlsx_negative_zero(frame: pd.DataFrame, worksheet: Any) -> pd.DataFrame:
+    """Restore numeric ``-0.0`` values normalized to integer zero by pandas.
+
+    The openpyxl-backed pandas reader converts integral numeric cells to ints,
+    which removes the sign bit from negative zero. The workbook still exposes
+    the original float values, so restore those cells after parsing.
+    """
+    if frame.empty:
+        return frame
+
+    positions: list[tuple[int, int]] = []
+    for row_index, row in enumerate(
+        worksheet.iter_rows(min_row=2, max_row=frame.shape[0] + 1)
+    ):
+        if row_index >= frame.shape[0]:
+            break
+        for column_index, cell in enumerate(row[: len(frame.columns)]):
+            value = cell.value
+            if isinstance(value, float) and value == 0.0 and math.copysign(1.0, value) < 0:
+                positions.append((row_index, column_index))
+
+    if not positions:
+        return frame
+
+    affected_columns = {column_index for _, column_index in positions}
+    for column_index in affected_columns:
+        column = frame.iloc[:, column_index]
+        if pd.api.types.is_integer_dtype(column.dtype):
+            safe_integers = all(abs(int(value)) <= 2**53 for value in column.dropna())
+            replacement = column.astype("float64") if safe_integers else column.astype(object)
+            frame.isetitem(column_index, replacement)
+    for row_index, column_index in positions:
+        frame.iat[row_index, column_index] = -0.0
+    return frame
+
+
 def _read_table(
     source: str | Path | DatasetConfig,
     *,
@@ -83,7 +198,28 @@ def _read_table(
         if suffix == ".csv":
             if requested_sheet is not None:
                 raise DatasetError("sheet_name is only valid for Excel workbooks")
-            frame = pd.read_csv(path, encoding=encoding, nrows=nrows)
+            columns = pd.read_csv(path, encoding=encoding, nrows=0).columns
+            identity_columns = [
+                column
+                for column in columns
+                if column == "sample_id" or str(column).startswith("meta__")
+            ]
+            frame = pd.read_csv(
+                path,
+                encoding=encoding,
+                nrows=nrows,
+                converters={
+                    column: _preserve_identity_csv_token
+                    for column in identity_columns
+                },
+                float_precision="round_trip",
+            )
+            frame = _restore_csv_integer_negative_zero(
+                frame,
+                path,
+                encoding=encoding,
+                nrows=nrows,
+            )
             sheets: tuple[str, ...] = ()
             selected = None
         else:
@@ -107,6 +243,8 @@ def _read_table(
                             f"Worksheet {selected!r} was not found; available sheets: {', '.join(sheets)}"
                         )
                 frame = workbook.parse(sheet_name=selected, nrows=nrows)
+                if suffix == ".xlsx":
+                    frame = _restore_xlsx_negative_zero(frame, workbook.book[selected])
     except DatasetError:
         raise
     except Exception as exc:

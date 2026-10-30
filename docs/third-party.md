@@ -7,13 +7,13 @@
 | NumPy | 2.5.3 | 数组与数值计算（base） | BSD-3-Clause、0BSD、MIT、Zlib、CC0-1.0 组件声明 | [项目](https://numpy.org/) · [许可](https://numpy.org/doc/stable/license.html) |
 | SciPy | 1.18.1 | 科学计算（base） | BSD 条款；发行包可能包含具有独立许可文本的二进制组件 | [项目](https://scipy.org/) · [许可](https://docs.scipy.org/doc/scipy/reference/dev/license.html) |
 | pandas | 3.0.6 | 表格读写与数据帧（base） | BSD 3-Clause | [项目](https://pandas.pydata.org/) · [许可](https://pandas.pydata.org/about/) |
-| scikit-learn | 1.9.1 | 71 个活动传统 estimator（base） | BSD-3-Clause | [项目与源码](https://github.com/scikit-learn/scikit-learn) · [许可与引用](https://scikit-learn.org/stable/about.html#citing-scikit-learn) |
+| scikit-learn | 1.9.1 | 传统分类、回归、聚类与特征处理模型的基础实现（base） | BSD-3-Clause | [项目与源码](https://github.com/scikit-learn/scikit-learn) · [许可与引用](https://scikit-learn.org/stable/about.html#citing-scikit-learn) |
 | XGBoost | 3.4.1 | C25 分类与 R24 回归（`xgboost` extra；CPU） | Apache-2.0 | [项目](https://xgboost.ai/) · [许可证](https://github.com/dmlc/xgboost/blob/master/LICENSE) |
 | LightGBM | 4.7.0 | C26 分类与 R25 回归（`lightgbm` extra；CPU） | MIT | [项目](https://lightgbm.readthedocs.io/) · [许可证](https://github.com/microsoft/LightGBM/blob/master/LICENSE) |
 | CatBoost | 1.2.10 | C27 分类与 R26 回归（`catboost` extra；CPU） | Apache-2.0 | [项目](https://catboost.ai/) · [许可证](https://github.com/catboost/catboost/blob/master/LICENSE) |
 | threadpoolctl | 3.7.0 | 将搜索和最终重拟合的数值线程限制为每 worker 1 个（base） | BSD-3-Clause | [项目与源码](https://github.com/joblib/threadpoolctl) · [许可](https://github.com/joblib/threadpoolctl/blob/master/LICENSE) |
 | hmmlearn | 0.3.3 | H01/H02/H03 隐马尔可夫模型（`sequence` extra） | BSD-3-Clause | [项目与源码](https://github.com/hmmlearn/hmmlearn) · [许可证](https://github.com/hmmlearn/hmmlearn/blob/main/LICENSE) |
-| PyTorch | 2.14.1 | N01/N02/N04/N06 深度模型张量、网络与训练（`deep` extra；当前实现固定 CPU） | BSD-3-Clause | [项目](https://pytorch.org/) · [许可证](https://github.com/pytorch/pytorch/blob/main/LICENSE) |
+| PyTorch | 2.14.1 | N01/N02/N04/N06/N07/N08/N09 深度模型张量、网络与训练（`deep` extra；N01 可选 CUDA） | BSD-3-Clause | [项目](https://pytorch.org/) · [许可证](https://github.com/pytorch/pytorch/blob/main/LICENSE) |
 | skorch | 1.4.0 | PyTorch 与 scikit-learn 风格训练接口的适配层（`deep` extra） | BSD-3-Clause | [项目与文档](https://skorch.readthedocs.io/) · [许可证](https://github.com/skorch-dev/skorch/blob/master/LICENSE) |
 | Optuna | 5.0.0 | TPE 参数搜索（`search` extra） | MIT | [项目](https://optuna.org/) · [源码与许可](https://github.com/optuna/optuna) |
 | pymoo | 0.6.2 | 混合变量遗传搜索（`search` extra） | Apache-2.0 | [项目](https://pymoo.org/) · [源码与许可](https://github.com/anyoptimization/pymoo) |
@@ -22,17 +22,14 @@
 | Matplotlib | 3.11.2 | QtAgg 指标图、基础图表渲染及 PNG/SVG 导出（desktop） | Matplotlib License Agreement | [项目](https://matplotlib.org/) · [许可](https://matplotlib.org/stable/project/license.html) |
 | openpyxl | 3.1.5 | XLSX 输入/输出及默认结果导出（base） | MIT | [项目](https://openpyxl.readthedocs.io/) · [许可](https://openpyxl.readthedocs.io/en/stable/license.html) |
 | xlrd | 2.0.2 | XLS 输入（desktop） | BSD | [项目与源码](https://github.com/python-excel/xlrd) · [许可](https://xlrd.readthedocs.io/en/latest/) |
+| umap-learn | 0.5.12 | UMAP 降维（`manifold` extra） | BSD-3-Clause | [项目与文档](https://umap-learn.readthedocs.io/) · [源码与许可](https://github.com/lmcinnes/umap/blob/master/LICENSE) |
+| statsmodels | 0.15.0 | 指数平滑、ARIMA/SARIMA（`forecasting` extra） | BSD-3-Clause | [项目与文档](https://www.statsmodels.org/) · [许可](https://github.com/statsmodels/statsmodels/blob/main/LICENSE.txt) |
+| packaging | 26.3 | 运行环境依赖安装时比较版本（base） | Apache-2.0 OR BSD-2-Clause | [项目与源码](https://github.com/pypa/packaging) · [许可](https://github.com/pypa/packaging/blob/main/LICENSE) |
 
-包构建后端为 Hatchling（`pyproject.toml` 的 build-system 要求 `hatchling>=1.27,<2`）；它是构建依赖，不是运行时依赖。版本解析以仓库 `uv.lock` 为准。提升树库各自只在安装对应 extra 时安装，不属于基础、`standard` 或 `full` profile。Optuna 与 pymoo 只在使用 `search` extra 时安装；Grid、随机与 SciPy 退火不要求该 extra。hmmlearn、PyTorch 与 skorch 分别只在安装 `sequence`/`deep` extras 时安装，不属于基础运行依赖。
+包构建后端为 Hatchling（`pyproject.toml` 的 build-system 要求 `hatchling>=1.27,<2`）；它是构建依赖，不是运行时依赖。版本解析以仓库 `uv.lock` 为准。XGBoost、LightGBM、CatBoost、UMAP、statsmodels、Optuna、pymoo、hmmlearn、PyTorch 和 skorch 分别由对应的可选 extra 管理；具体运行包和 Windows 发行包的包含范围以最新 Release 与运行环境检查为准。
 
 ## 算法上游
 
-传统模型目录中的每个条目记录 scikit-learn estimator 的完整导入名和官方 API 链接；HMM 与深度模型记录各自上游库和安装 extra，见[模型与参数索引](model-index.md)。参数默认值由实际 estimator `get_params(deep=True)` 或扩展模型 `parameter_schema()` 暴露；模型 smoke 结果证明的是对应模拟任务下的执行，不代表模型准确率、科学有效性或任意参数组合都适用。当前深度实现显式使用 CPU，尚未验证 GPU 运行路径。
+传统模型目录中的条目记录 scikit-learn estimator 的完整导入名和官方 API 链接；HMM 与深度模型记录各自上游库和可选 extra，见[模型与参数索引](model-index.md)。参数默认值由 estimator `get_params(deep=True)` 或扩展模型 `parameter_schema()` 暴露；目录和参数解析不证明模型适用于具体研究数据。N01 在 CUDA PyTorch 和可用 GPU 均通过环境检查后可选择 CUDA；其他深度模型当前使用 CPU。代码提供 CUDA 路径不代表已在所有 GPU 型号上验证。
 
 许可证信息用于说明当前直接依赖来源，不构成法律意见。具体重分发义务以随对应锁定发行包提供的完整许可证、版权声明和 NOTICE 为准；依赖升级后应重新核对其元数据和许可证文件。
-
-## 2026-10-27 新增可选组件
-
-- `umap-learn==0.5.12`（BSD-3-Clause）：manifold extra，含锁定的 pynndescent、numba、llvmlite 等依赖。
-- `statsmodels==0.15.0`（BSD-3-Clause）：forecasting extra，指数平滑、ARIMA/SARIMA；传递依赖以 uv.lock 为准。
-- 新增融合、统计回归、GMM、HDBSCAN 使用已有 scikit-learn；CNN、TCN、Transformer、Autoencoder 使用已有 PyTorch/skorch。上述库保持其原许可证，不改变本项目许可。

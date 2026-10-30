@@ -25,6 +25,7 @@ from .sequence import load_owned_sequence_plan, save_owned_sequence_plan
 from .sequence_reporting import sequence_plan_summary
 from .search_space import SearchSpace, json_copy
 from .sequence_models import EXTENDED_MODEL_IDS, HMM_MODEL_IDS, validate_extended_parameters
+from .cross_validation import CrossValidationInterrupted
 
 _ERROR_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -70,9 +71,9 @@ class SearchSpec:
     method: str = "grid"
     space: SearchSpace = field(default_factory=SearchSpace)
     objective: ObjectiveSpec = field(default_factory=ObjectiveSpec)
-    max_fits: int = 50
-    timeout_seconds: float = 1200.
-    max_proposals: int = 250
+    max_fits: int = 10
+    timeout_seconds: float = 600.
+    max_proposals: int = 30
     seed: int = 42
 
     def __post_init__(self):
@@ -107,7 +108,9 @@ class SearchSpec:
         data["space"] = SearchSpace.from_dict(data.get("space", {}))
         data["objective"] = ObjectiveSpec.from_dict(data.get("objective"))
         if "max_proposals" not in data:
-            data["max_proposals"] = int(data.get("max_fits", 50)) * 5
+            # Explicit older budgets retain the former inferred proposal cap;
+            # entirely new/default requests use the lighter approved defaults.
+            data["max_proposals"] = int(data["max_fits"]) * 5 if "max_fits" in data else 30
         return cls(**data)
 
     def to_dict(self):
@@ -138,9 +141,16 @@ class TrialRecord:
     error_id: str | None = None
     traceback: str | None = None
     fit_count: int = 0
+    validation_source: str | None = None
+    cv_metadata: dict[str, Any] | None = None
+    oof_metrics: dict[str, Any] | None = None
 
     def to_dict(self):
-        return json_copy(asdict(self))
+        payload = asdict(self)
+        for name in ("validation_source", "cv_metadata", "oof_metrics"):
+            if payload[name] is None:
+                payload.pop(name)
+        return json_copy(payload)
 
     @classmethod
     def from_dict(cls, value):
@@ -317,6 +327,14 @@ class _SearchEngine:
         if session.frozen_config_sha256 != record.config_sha256 or session.snapshot_manifest != self.snapshot.to_dict():
             raise ValueError("Stored winner does not match history/snapshot")
         expected = replace(self.config, parameters=record.parameters, output_dir=None)
+        if self.config.split.strategy == "kfold":
+            from .cv_experiment import verify_cv_session
+
+            verify_cv_session(session, self.snapshot, expected)
+            if (record.validation_source != "cv_fold_mean" or record.metrics != session.metrics["validation"]
+                    or record.cv_metadata != session.cv_metadata or record.oof_metrics != session.metrics["oof"]):
+                raise ValueError("Stored CV winner differs from its fold/OOF search receipt")
+            return
         if _canonical_config(expected)[1] != session.frozen_config_sha256 or session.fitted_model.config != session.frozen_config:
             raise ValueError("Stored winner configuration is inconsistent")
         session_plan = getattr(session, "sequence_plan", None)
@@ -413,16 +431,31 @@ class _SearchEngine:
             record.fit_count += 1
             record.fit_index = self.actual_fit_count
             self.emit("fit_started", record, fold=index)
+        interruption = None
         try:
             with threadpool_limits(limits=1):
-                session = prepare_experiment(trial_config, snapshot=self.snapshot, sequence_plan=self.sequence_plan, _before_cv_fit=before_cv_fit)
+                session = prepare_experiment(trial_config, snapshot=self.snapshot, sequence_plan=self.sequence_plan,
+                                             _before_cv_fit=before_cv_fit, should_cancel=self.should_cancel,
+                                             deadline=time.monotonic() + max(0., self.spec.timeout_seconds - self.elapsed()))
                 record.training_curves = _session_training_curves(session)
-                record.objective_value, record.metrics = score_session(session, self.objective, self.snapshot)
+                if self.config.split.strategy == "kfold":
+                    record.validation_source = "cv_fold_mean"
+                    record.cv_metadata = json_copy(session.cv_metadata)
+                    record.oof_metrics = json_copy(session.metrics["oof"])
+                    record.metrics = json_copy(session.metrics["validation"])
+                    value = record.metrics.get(self.objective.metric)
+                    record.objective_value = float(value) if value is not None else None
+                else:
+                    record.objective_value, record.metrics = score_session(session, self.objective, self.snapshot)
             if session.test_evaluation_count or "test" in session.metrics:
                 raise RuntimeError("Search trial violated test isolation")
             record.status = "complete" if record.objective_value is not None else "unscorable"
         except Exception as exc:
             record.status, record.error = "failed", f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, CrossValidationInterrupted):
+                interruption = exc.reason
+                record.cv_metadata = {"strategy": "kfold", "completed_folds": exc.completed_folds,
+                                      "n_splits": self.config.split.n_splits, "interrupted": exc.reason}
             try:
                 record.traceback = "".join(
                     traceback.format_exception(type(exc), exc, exc.__traceback__)
@@ -460,6 +493,9 @@ class _SearchEngine:
                 _atomic_session_plot_cache_manifest(path, session)
                 record.session_path = self.best_session_path = str(path)
         self.emit("trial_failed" if record.status == "failed" else "trial_completed", record, best_session_path=self.best_session_path)
+        if interruption is not None:
+            self.stop_reason = "cancelled" if interruption == "cancelled" else "time_limit"
+            raise _StopSearch
         return self.loss(record)
 
     def retry_pending(self) -> None:
@@ -509,6 +545,9 @@ class _SearchEngine:
             record.objective_value, record.metrics, record.error = cached.objective_value, json_copy(cached.metrics), cached.error
             record.training_curves = json_copy(cached.training_curves) if cached.training_curves is not None else None
             record.error_id, record.traceback = cached.error_id, cached.traceback
+            record.validation_source = cached.validation_source
+            record.cv_metadata = json_copy(cached.cv_metadata) if cached.cv_metadata is not None else None
+            record.oof_metrics = json_copy(cached.oof_metrics) if cached.oof_metrics is not None else None
             self.trials.append(record)
             self.emit("cache_hit", record)
             return self.loss(record)
@@ -603,6 +642,8 @@ def search(config, spec, *, snapshot=None, sequence_plan=None, job_id=None, on_e
     spec.objective = spec.objective.resolve(config.task)
     if config.evaluation is not None and spec.max_fits < config.evaluation.folds + 1:
         raise ValueError("Fit budget must cover the main model plus every cross-validation fold")
+    if config.split.strategy == "kfold" and spec.objective.split != "validation":
+        raise ValueError("K-fold candidates rank by development validation-fold means; training exploration requires holdout")
     if get_model(config.model_id)["task"] != config.task:
         raise ValueError("Model/task mismatch")
     resumed = SearchResume.from_dict(resume) if resume is not None else None

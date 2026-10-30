@@ -87,11 +87,27 @@ def freeze_selection(search_result: SearchResult, *, winner_trial_id=None) -> Fr
         sequence_plan.verify(config, snapshot)
     elif sequence_plan is not None:
         raise ExperimentError("Tabular model winner unexpectedly carries a SequencePlan")
-    if session.snapshot_manifest != snapshot.to_dict() or _canonical_config(config)[1] != winner.config_sha256 or session.fitted_model.frozen_config_sha256 != winner.config_sha256 or session.config.to_dict() != config.to_dict() or session.fitted_model.config != config.to_dict():
+    if config.split.strategy == "kfold":
+        from .cv_experiment import verify_cv_session
+
+        verify_cv_session(session, snapshot, config)
+        if (winner.validation_source != "cv_fold_mean" or winner.metrics != session.metrics["validation"]
+                or winner.cv_metadata != session.cv_metadata or winner.oof_metrics != session.metrics["oof"]
+                or winner.objective_value != session.metrics["validation"].get(search_result.spec.objective.metric)):
+            raise ExperimentError("CV winner receipt differs from its complete fold evaluation")
+        fitted_identity_ok = session.frozen_config_sha256 == winner.config_sha256
+    else:
+        fitted_identity_ok = (session.fitted_model.frozen_config_sha256 == winner.config_sha256
+                              and session.fitted_model.config == config.to_dict())
+    if session.snapshot_manifest != snapshot.to_dict() or _canonical_config(config)[1] != winner.config_sha256 or not fitted_identity_ok or session.config.to_dict() != config.to_dict():
         raise ExperimentError("Winner fitted configuration/snapshot differs from its search record")
     if (getattr(session, "sequence_plan", None).to_dict() if getattr(session, "sequence_plan", None) is not None else None) != (sequence_plan.to_dict() if sequence_plan is not None else None):
         raise ExperimentError("Winner session does not match the search SequencePlan")
     metadata = dict(job_id=search_result.job_id, winner_trial_id=winner.trial_id, config=config.to_dict(), snapshot=snapshot.to_dict(), search_fingerprint=search_result.fingerprint, objective=search_result.spec.objective.to_dict(), objective_value=winner.objective_value, validation_metrics=json_copy(winner.metrics), fit_scope="train_validation", sequence_plan_manifest=sequence_plan.to_dict() if sequence_plan is not None else None)
+    if config.split.strategy == "kfold":
+        metadata.update(cv_metadata=json_copy(session.cv_metadata), oof_metrics=json_copy(session.metrics["oof"]),
+                        validation_source="cv_fold_mean", oof_source="cv_oof",
+                        oof_payload={"rows": json_copy(session.rows), "plot_scores": json_copy(session.plot_scores)})
     extended_metadata = getattr(session, "extended_training_metadata", None)
     if config.model_id in {"H01", "H02", "H03", "N01", "N02", "N04", "N06", "N07", "N08", "N09"}:
         refit_provenance = getattr(session, "refit_provenance", None)
@@ -168,9 +184,22 @@ def _verify_envelope(path, envelope, selection, *, allow_interrupted_test=False)
     expected_target = _target_for_task(selection.snapshot.target, selection.config.task, session.fitted_model.estimator)
     if _table_digest(session.features) != _table_digest(selection.snapshot.features) or _table_digest(session.target) != _table_digest(expected_target):
         raise ExperimentError("Final session data was modified")
-    expected_train = np.concatenate([selection.snapshot.splits["train"], selection.snapshot.splits["validation"]])
+    expected_train = (selection.snapshot.splits["development"] if selection.config.split.strategy == "kfold"
+                      else np.concatenate([selection.snapshot.splits["train"], selection.snapshot.splits["validation"]]))
     if not np.array_equal(session.splits["train"], expected_train) or len(session.splits["validation"]) or not np.array_equal(session.splits["test"], selection.snapshot.splits["test"]):
         raise ExperimentError("Final refit/test positions were modified")
+    if selection.config.split.strategy == "kfold":
+        from .cv_experiment import verify_cv_refit_session
+
+        verify_cv_refit_session(session, selection.snapshot, selection.config)
+        expected_oof = selection.metadata["oof_payload"]
+        if (getattr(session, "cv_metadata", None) != selection.metadata["cv_metadata"]
+                or session.metrics.get("cv") != selection.metadata["cv_metadata"]
+                or session.metrics.get("oof") != selection.metadata["oof_metrics"]
+                or session.metrics.get("selection_validation") != selection.metadata["validation_metrics"]
+                or [row for row in session.rows if row["split"] == "oof"] != expected_oof["rows"]
+                or any(session.plot_scores.get(name) != values for name, values in expected_oof["plot_scores"].items())):
+            raise ExperimentError("Final refit CV/OOF metadata differs from its frozen selection")
     allowed_states = {"frozen", "tested"}
     if allow_interrupted_test:
         allowed_states.add("testing")
@@ -231,6 +260,15 @@ def _refit(selection, path, on_event, should_cancel, *, allow_interrupted_test=F
                 refit_provenance=extended_provenance,
             )
         session.metrics["selection_validation"] = json_copy(selection.metadata["validation_metrics"])
+        if selection.config.split.strategy == "kfold":
+            session.cv_metadata = json_copy(selection.metadata["cv_metadata"])
+            session.metrics["cv"] = json_copy(selection.metadata["cv_metadata"])
+            session.metrics["oof"] = json_copy(selection.metadata["oof_metrics"])
+            session.rows = json_copy(selection.metadata["oof_payload"]["rows"]) + session.rows
+            session.plot_scores.update(json_copy(selection.metadata["oof_payload"]["plot_scores"]))
+            from .cv_experiment import seal_cv_refit_session
+
+            seal_cv_refit_session(session)
         session.metrics["selection"].update(mode="parameters chosen using independent validation before 80% refit", winner_trial_id=selection.winner_trial_id, selection_sha256=selection.selection_sha256)
         session.fitted_model.preprocessing["selection_sha256"] = selection.selection_sha256
         freeze_experiment(session, selection.config)

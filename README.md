@@ -1,70 +1,61 @@
-# pyml-workbench
+# PY-ML 工作台
 
-`pyml-workbench` 是面向表格和序列数据的 Python 包和中文 Windows 桌面工作台，提供单模型流程与多数据集/多模型验证搜索队列。Python 导入名为 `pyml_workbench`。当前源码目录有 111 个可运行模型：84 个 scikit-learn 模型、4 个融合适配器、5 个传统时序模型、UMAP、Autoencoder、6 个可选提升树模型、3 个 HMM 和 7 个监督深度模型。基础安装覆盖 90 项；本轮新增指标、交叉验证和算法接入见[扩展指南](docs/model-expansion.md)。2026-10-27 已新增包含本轮功能的完整扩展版 EXE，历史发行包保留。提升树模型各自使用独立 extra；HMM 使用 `sequence` extra，深度模型使用 `deep` extra。
+PY-ML 是面向表格和序列数据的中文机器学习工作台，提供单任务训练、批量搜索、数据转换、结果导出和 Python API。它包含 111 个模型目录条目，支持分类、回归、聚类、降维、异常检测、时序预测、HMM 和深度学习任务。模型条目数描述目录范围，不代表本版已对每个模型完成独立的全流程拟合验证；各模型的能力和依赖见[模型与参数索引](docs/model-index.md)。
 
-本 README 记录 **0.4.4 断点恢复版（2026-10-07）**：在原 0.4.4 功能上加入单任务与批量进度、设置和结果的跨启动恢复，以及安全退出；中断的计算步骤整步重新开始。标准版继续不打包提升树 SDK。发布内容、验证范围和已知限制见[版本记录](version.md)。
+## 下载与启动
 
-首次使用请看[操作指南](docs/overall-guide.md)。主窗口底部点击“操作指南”，或使用“帮助 → 操作指南”/F1，可离线阅读、跳转章节和搜索；指南随 Python 包和 EXE 一起分发。
+Windows 用户请从 [GitHub 最新 Release](https://github.com/hexiovo/PY-ML/releases/latest) 下载完整 Windows x64 程序包。GitHub 页面的 **Code → Download ZIP** 是源码包，不是可直接运行的程序。
 
-带截图的[PDF 操作指南](output/pdf/PYML-Workbench-0.4.4-图文指南.pdf)包含 13 章、真实界面截图、可点击目录、章节书签和页码，适合离线阅读或打印。配套[合成演示数据](docs/assets/pdf-guide/demo-data.csv)可用于练习分类流程；截图中的指标仅说明操作。
+1. 将 ZIP 完整解压到一个有写入权限的文件夹；路径可包含中文。
+2. 双击 `Start.cmd` 启动工作台。程序包已包含 Python 运行环境，无需另装 Python。
+3. 如需安装到当前 Windows 用户目录，双击 `Install.cmd`。安装使用版本化的 `%LOCALAPPDATA%` 目录，不需要管理员权限。
 
-## 安装与启动
+运行时请保留整个程序目录，包括 `PYML-Workbench.exe`、`PYML-Worker.exe`、`_internal`、文档和 `skills`；不要只复制主程序或单独移动 `_internal`。Windows 压缩包可直接运行，也可用安装脚本部署。Release 页面还提供独立的 PYML 技能 ZIP、单文件便携版、Python wheel/sdist 和 SHA-256 校验文件。
 
-**本轮 EXE（完整扩展版，111 个目录模型）：** 下载并完整解压 [2026-10-27 ZIP](dist/PYML-Workbench-0.4.4-windows-x64-full-models111-20261027.zip)，双击 `PYML-Workbench.exe`。本机新目录为 `dist/model-expansion-20261027/PYML-Workbench-full`；无需安装 Python，必须保留 worker 与 `_internal`。源码和校验信息记录在 Git，EXE/ZIP 保留为本地发行文件。操作与检查范围见 [EXE 指南](docs/exe-guide.md)。
+## 初次使用
 
-后续 Windows 发行支持两种 PyInstaller profile：`standard` 保留桌面向导、90 个基础模型及 Grid/随机/退火搜索；`full` 额外包含 HMM、PyTorch/skorch 深度模型、UMAP、传统统计预测、提升树、TPE 与遗传搜索。profile 依赖清单见 `packaging/profiles.json`。在 Python 3.12.14 打包环境安装对应 `desktop` 或全部 extras 及 `packaging/build-requirements.txt` 后，运行 `python packaging/build_release.py --profile standard` 或 `--profile full`；可加 `--work-dir <绝对的新临时目录>` 将 PyInstaller 中间文件放在发行输出以外，并可加 `--dry-run` 查看命令。新输出目录与 ZIP 带有 profile 名称，保留既有 0.4.2 发行目录。实际文件大小以各次 `release-result.json` 为准；未构建的 profile 不代表已测量体积变化。
+打开“帮助 → 操作指南”或按 **F1**，按页面步骤导入 CSV/Excel、选择目标列和特征、设置数据划分与模型，再运行训练和验证。确认验证结果后，冻结配置并按一次性流程执行最终测试。批量搜索、序列与深度模型的详细步骤见对应指南。
 
-0.4.4 标准版 Windows EXE 可从 [ZIP 发行包](dist/PYML-Workbench-0.4.4-windows-x64-standard-ui-polish-20261008.zip) 获取，程序目录位于 `dist/ui-polish-20261008/PYML-Workbench-standard`：双击 `PYML-Workbench.exe`。此处是历史标准版；使用本轮新增模型请启动上方完整扩展版。新版包含操作指南、悬停菜单、GitHub Issue 联系入口和适配 Windows 缩放的启动动画。原有发行保留。复制或解压时必须保留整个文件夹，包括 `PYML-Worker.exe` 和 `_internal`，不能只复制主 EXE；使用者不需要另装 Python。Windows 打包与验证说明见[EXE 指南](docs/exe-guide.md)。
+工作台支持表格数据的训练前转换与降维、验证与交叉验证、批量模型搜索和结果导出。模型选择与预处理应只使用训练/开发数据；最终测试应留到方案冻结后。模型运行能力取决于数据类型、模型限制和实际环境，不能把预测指标直接解释为统计推断结论。
 
-单任务和批量搜索会在用户数据目录保存基本设置与已完成的进度、结果；发现记录时可选择恢复或新建。安全退出会停止当前计算并自动保存此前完成的步骤；例如 500 次迭代中途退出，恢复时这一整步从第 1 次重新计算。恢复已完成的批次只加载结果；选择新建且设置有效时，会开始独立的新批次。
+### 数据转换插件
 
-需要 64 位 Windows、Python 3.12 和项目锁文件。打开 PowerShell，在项目根目录运行：
+“格式 → 数据转换”提供 HyperEEG 与 PYfNIRs 转换入口，并通过“插件设置…”管理插件路径。首次打开时入口默认不可用；选择包含 `pyml-plugin.json` 的插件目录并保存，程序检查通过后启用对应入口。插件设置在重启后保留，路径失效时入口会停用并显示原因。
+
+转换器独立于主程序发布，请从[转换插件仓库](https://github.com/hexiovo/PY-ML_support_trans)获取相应发行目录。主程序包不包含这两个转换器的实现。
+
+### 运行环境
+
+“帮助 → 检查运行环境…”会检查 Python、依赖、程序文件和必要资源，并区分必需组件与可选算法。需要补充组件时可用“一键安装”：安装在当前用户的专用依赖目录，只有后台加载检查通过后才切换生效；安装结束会再次检查，失败时保留已有环境。安装完成后按提示重启工作台。
+
+## 使用 AI 生成实验配置
+
+程序包内含 `skills/pyml-study-config/` 完整技能文件夹；Release 另提供独立 ZIP 和单文件便携版。该技能是给 AI 助手使用的工作说明，会帮助整理实验信息、生成 PYML 配置，并在需要时要求提供独立的数据准备脚本与统计脚本。它不会替研究者补猜单位、被试身份或统计单位，也不会因为配置生成而自动运行完整分析。
+
+在支持技能目录的 AI 中，可把 `pyml-study-config` 文件夹复制到该 AI 的技能目录后在新会话中启用。其他 AI 可上传完整技能 ZIP，或直接提供单文件便携版。便携版包含技能正文与全部参考资料，但不包含可执行辅助脚本；没有文件或运行工具的 AI 只能给出完整文件内容和准确命令，不能声称已验证。
+
+可用下面的提示开始：
+
+> 请使用 PYML study-config 技能，把我的实验设计整理成可检查的 PYML 配置和操作包。先区分已知、建议和缺失信息；关键事实不足时集中询问。只依据当前源码契约声明可执行性，不要猜单位、身份或统计单位，不要自动读取最终测试结果。
+
+## 文档
+
+- [操作指南](docs/overall-guide.md)：从导入数据到导出结果的完整流程。
+- [用户指南](docs/user-guide.md)：单任务操作与常用设置。
+- [批量搜索指南](docs/batch-guide.md)：多数据集搜索、恢复和结果比较。
+- [序列建模指南](docs/sequence-guide.md)和[深度学习指南](docs/deep-learning-guide.md)：序列、窗口模型与深度模型的要求。
+- [Windows 下载与安装](docs/exe-guide.md)：便携运行、用户级安装和常见问题。
+- [Python API](docs/api-guide.md)、[模型索引](docs/model-index.md)与[第三方组件说明](docs/third-party.md)：开发与模型参考。
+- [PYML 实验配置技能](skills/pyml-study-config/SKILL.md)：面向 AI 助手的配置和分析工作流。
+- [版本记录](version.md)：本版主要变化。
+
+## Python 开发环境
+
+源码用户需要 64 位 Windows、Python 3.12 和 uv。在仓库根目录打开 PowerShell，同步项目依赖并启动：
 
 ```powershell
-uv sync --locked --no-editable --no-dev --extra desktop --extra search
+uv sync --locked --no-editable --no-dev --extra desktop --extra search --extra sequence --extra deep --extra manifold --extra forecasting --extra xgboost --extra lightgbm --extra catboost
 .\run_pyml_workbench.bat
 ```
 
-启动器调用项目 `.venv` 中的 Python，不会安装依赖。也可直接启动：
-
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -m pyml_workbench
-```
-
-安装为 non-editable：uv 会构建并安装本地包到虚拟环境，而不是从源码目录导入。基础依赖包括 `openpyxl`，供 XLSX 读取和默认结果导出使用；`desktop` extra 提供 Qt 界面、指标图、基础图表和旧版 XLS 输入。完整搜索后端由 `search` extra 提供；只安装基础依赖仍可使用 Grid、随机和退火搜索，TPE 与遗传搜索需要 Optuna/pymoo。提升树库不会随基础或 `standard` 配置自动安装；当前 `full` 构建配置包含这些 extras。源码运行单独启用时，需要时，在同步命令中分别追加 `--extra xgboost`、`--extra lightgbm` 或 `--extra catboost`。应用启动时只检查可选包是否可发现，缺包时不会自动安装，并会说明对应 extra。要启用 HMM 或深度模型，可分别追加 `--extra sequence` 或 `--extra deep`。修改包源码后需再次同步；开发者命令见[开发指南](docs/development.md)。`-X utf8` 用于让中文路径、日志和 JSON 在 Windows 上使用一致的 UTF-8 编码。
-
-## 当前交付范围
-
-- 导入 CSV、XLSX、XLS 表格，预览内容并选择特征列、目标列和工作表；“分析”菜单可查看完整数据概况，包括列类型、缺失数和描述统计。
-- 主窗口顶部可“导入设置”（Ctrl+O）、“保存修改”（Ctrl+S）和“导出设置”（Ctrl+Shift+S），使用 JSON 实验参数文件。导入后保存会写回当前文件，导出另存副本；首次保存会选择文件。参数须通过校验，文件以原子方式写入。
-- 对已加载表格、单任务结果或已完成批量任务打开基础图表选择器。可用图表按所选数据列与通过绘图清单核验的缓存输出决定，支持直方图、类别计数、散点/相关性、分类混淆矩阵、回归实际值/预测值与残差、聚类、已有降维坐标和 HMM 状态后验图；图表可另存为 PNG 或 SVG。单任务结果缓存需要自己的绘图清单；批量 winner 清单核验 train/validation，最终会话的独立清单用于 test。旧缓存按各自来源停用缺少清单的分区，绘图入口不会自动重训或测试。
-- C25–C27 与 R24–R26 分别提供 XGBoost、LightGBM、CatBoost 的分类和回归模型。每个库有单独的 `xgboost`、`lightgbm`、`catboost` extra，模型使用 CPU 和单数值线程作为默认值。没有对应库时，模型状态会显示缺少的 extra，训练不会自动安装。
-- 新训练的分类缓存可在有真实类别分数时绘制逐类 ROC 和精确率-召回率曲线；缓存标明概率或非概率决策分数、类别顺序及行位置。多分类决策分数只在 OvR 语义可确认时启用。支持的监督模型可绘制 `feature_importances_` 或有正负方向的 `coef_`，特征名来自实际拟合的变换器输出。旧缓存保留混淆矩阵等基础图；没有分数的旧缓存会说明需重新训练才能绘 ROC/PR。
-- 批量队列新增同条件模型指标图，只比较 `_comparison_group` 判定身份完全匹配、任务完成且有成功 winner 分数的记录；数据哈希、实际划分哈希、特征/目标、指标、方向和评分分区不一致时不会放在同一图中。
-- H01/H02/H03 用于 HMM 序列建模；N01/N02 是表格神经网络分类/回归器，N04/N06 是基于滑动窗口的 LSTM/GRU 回归器。序列配置可指定分组、时间顺序、观测列、窗口和预测跨度；模型按训练中确定的早停 epoch 在训练+验证数据上重拟合。
-- `SplitConfig.seed` 固定数据划分；HMM 和深度模型的 `random_state` 可显式设为 0 到 `2**32-1` 的整数控制初始化，未提供或设为 `None` 时回退到划分 seed。
-- 运行单模型的训练与验证；查看验证指标后，显式冻结当前配置，再执行一次最终测试。
-- 从主窗口底部的“批量搜索队列”配置多个数据集和模型组合，按组合预检、持久记录与恢复；可用 1 或 2 个 worker，每个组合最多 50 次真实拟合、250 个 proposals 和 20 分钟活动时间。搜索只使用训练/验证数据，候选参数以验证目标评分；冻结 validation winner 后，在训练+验证数据上重拟合并执行一次最终测试。
-- 导出指标、逐行结果、配置和可重载的拟合模型；新数据推理只开放模型真实支持的操作。
-- Python API 支持以 `prepare_experiment → freeze_experiment → evaluate_test` 分开控制验证和最终测试，也提供自动完成一次测试的 `run_experiment` 便捷接口。
-- Python 批量 API 提供 `run_batch` 一步预检/入队/运行入口，以及 `load_search_result → freeze_search_winner → finalize_frozen_search` 的恢复与显式最终化流程。
-- 在“文件”菜单选择“导出诊断包…”可将当前 GUI 会话或指定 `error_id` 导出为脱敏 ZIP；保存位置由用户选择，程序不会上传或覆盖已有文件。
-- 在“文件”菜单选择“打开统一操作日志…”可查看持续追加的 UTF-8 应用操作记录；源码运行时文件位于项目目录，打包运行时位于 EXE 目录。
-
-详细单任务和基础图表操作见[用户指南](docs/user-guide.md)，批量队列、搜索配置和批量结果图见[批量搜索指南](docs/batch-guide.md)，序列配置见[序列建模指南](docs/sequence-guide.md)，深度模型见[深度学习指南](docs/deep-learning-guide.md)，Python 接口见[API 指南](docs/api-guide.md)，111 项源码模型目录见[模型与参数索引](docs/model-index.md)。[扩展模型合成示例](examples/synthetic_extended.py)覆盖 HMM 与 N06 的验证、冻结、测试、导出和推理。运行时和许可证来源见[第三方组件说明](docs/third-party.md)。版本状态与未覆盖范围见 [`version.md`](version.md)。
-
-本仓库的自动化检查可这样运行：
-
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -X utf8 examples\synthetic_classification.py
-.\.venv\Scripts\python.exe -X utf8 examples\synthetic_dimensionality_reduction.py
-.\.venv\Scripts\python.exe -X utf8 examples\synthetic_batch.py
-.\.venv\Scripts\python.exe -X utf8 examples\synthetic_extended.py
-```
-
-示例只创建临时的合成数据，不读取项目夹具或用户文件。当前格式验证覆盖 CSV、XLSX 和本轮使用 xlwt 生成的合成 OLE/BIFF8 `.xls` 样本；经应用导入核对两个工作表、六个字段、样本值及类型。这不代表对所有 XLS 文件的完整兼容保证。
-
-## 2026-10-27 源码扩展
-
-新增 27 个模型、分类/回归/有标签无监督指标，以及可选搜索目标、分组划分、滚动验证和 2–10 折交叉验证。界面“算法与评价”页可选择搜索指标，并在“划分与评价 JSON”配置验证方案。UMAP 与统计时序模型分别需要 `manifold`、`forecasting` extras。完整配置、指标定义与适用限制见[扩展指南](docs/model-expansion.md)。历史 EXE/ZIP 保留；本轮完整扩展版 ZIP 已另行构建。源码运行时使用项目启动器。
+开发构建和 API 说明见[开发指南](docs/development.md)与[Python API 指南](docs/api-guide.md)。
