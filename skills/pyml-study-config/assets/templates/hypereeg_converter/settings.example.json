@@ -1,0 +1,10 @@
+{
+  "plugin": "",
+  "input": "",
+  "matlab": "",
+  "output_root": "",
+  "memory_helper_root": "",
+  "max_artifact_load_gib": 1.5,
+  "reserve_free_gib": 1.0,
+  "max_output_cells": 1000000
+}

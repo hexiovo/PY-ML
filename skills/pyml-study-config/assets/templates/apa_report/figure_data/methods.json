@@ -1,0 +1,2286 @@
+{
+  "methods": [
+    {
+      "key": "model:C01:binary:table1",
+      "base_key": "model:C01",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C01:multiclass:table1",
+      "base_key": "model:C01",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C02:binary:table1",
+      "base_key": "model:C02",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C02:multiclass:table1",
+      "base_key": "model:C02",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C03:binary:table1",
+      "base_key": "model:C03",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C03:multiclass:table1",
+      "base_key": "model:C03",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C04:binary:table1",
+      "base_key": "model:C04",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C04:multiclass:table1",
+      "base_key": "model:C04",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C05:binary:table1",
+      "base_key": "model:C05",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C05:multiclass:table1",
+      "base_key": "model:C05",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C06:binary:table1",
+      "base_key": "model:C06",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C06:multiclass:table1",
+      "base_key": "model:C06",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C07:binary:table1",
+      "base_key": "model:C07",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C07:multiclass:table1",
+      "base_key": "model:C07",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C08:binary:table1",
+      "base_key": "model:C08",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C08:multiclass:table1",
+      "base_key": "model:C08",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C09:binary:table1",
+      "base_key": "model:C09",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C09:multiclass:table1",
+      "base_key": "model:C09",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C10:binary:table1",
+      "base_key": "model:C10",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C10:multiclass:table1",
+      "base_key": "model:C10",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C11:binary:table1",
+      "base_key": "model:C11",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C11:multiclass:table1",
+      "base_key": "model:C11",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C12:binary:table1",
+      "base_key": "model:C12",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C12:multiclass:table1",
+      "base_key": "model:C12",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C13:binary:table1",
+      "base_key": "model:C13",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C13:multiclass:table1",
+      "base_key": "model:C13",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C14:binary:table1",
+      "base_key": "model:C14",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C14:multiclass:table1",
+      "base_key": "model:C14",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C15:binary:table1",
+      "base_key": "model:C15",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C15:multiclass:table1",
+      "base_key": "model:C15",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C16:binary:table1",
+      "base_key": "model:C16",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C16:multiclass:table1",
+      "base_key": "model:C16",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C17:binary:table1",
+      "base_key": "model:C17",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C17:multiclass:table1",
+      "base_key": "model:C17",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C18:binary:table1",
+      "base_key": "model:C18",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C18:multiclass:table1",
+      "base_key": "model:C18",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C19:binary:table1",
+      "base_key": "model:C19",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C19:multiclass:table1",
+      "base_key": "model:C19",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C20:binary:table1",
+      "base_key": "model:C20",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C20:multiclass:table1",
+      "base_key": "model:C20",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C21:binary:table1",
+      "base_key": "model:C21",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C21:multiclass:table1",
+      "base_key": "model:C21",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C22:binary:table1",
+      "base_key": "model:C22",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C22:multiclass:table1",
+      "base_key": "model:C22",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C23:binary:table1",
+      "base_key": "model:C23",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C23:multiclass:table1",
+      "base_key": "model:C23",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C24:binary:table1",
+      "base_key": "model:C24",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C24:multiclass:table1",
+      "base_key": "model:C24",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:R01:continuous:table1",
+      "base_key": "model:R01",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R02:continuous:table1",
+      "base_key": "model:R02",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R03:continuous:table1",
+      "base_key": "model:R03",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R04:continuous:table1",
+      "base_key": "model:R04",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R05:continuous:table1",
+      "base_key": "model:R05",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R06:continuous:table1",
+      "base_key": "model:R06",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R07:continuous:table1",
+      "base_key": "model:R07",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R08:continuous:table1",
+      "base_key": "model:R08",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R09:continuous:table1",
+      "base_key": "model:R09",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R10:continuous:table1",
+      "base_key": "model:R10",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R11:continuous:table1",
+      "base_key": "model:R11",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R12:continuous:table1",
+      "base_key": "model:R12",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R13:continuous:table1",
+      "base_key": "model:R13",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R14:continuous:table1",
+      "base_key": "model:R14",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R15:continuous:table1",
+      "base_key": "model:R15",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R16:continuous:table1",
+      "base_key": "model:R16",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R17:continuous:table1",
+      "base_key": "model:R17",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R18:continuous:table1",
+      "base_key": "model:R18",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R19:continuous:table1",
+      "base_key": "model:R19",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R20:continuous:table1",
+      "base_key": "model:R20",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R21:count:table1",
+      "base_key": "model:R21",
+      "kind": "model",
+      "profile": "count",
+      "table": 1
+    },
+    {
+      "key": "model:R22:continuous:table1",
+      "base_key": "model:R22",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R23:continuous:table1",
+      "base_key": "model:R23",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:K01:unsupervised:table1",
+      "base_key": "model:K01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K02:unsupervised:table1",
+      "base_key": "model:K02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K03:unsupervised:table1",
+      "base_key": "model:K03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K04:unsupervised:table1",
+      "base_key": "model:K04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K05:unsupervised:table1",
+      "base_key": "model:K05",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K06:unsupervised:table1",
+      "base_key": "model:K06",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K07:unsupervised:table1",
+      "base_key": "model:K07",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K08:unsupervised:table1",
+      "base_key": "model:K08",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K09:unsupervised:table1",
+      "base_key": "model:K09",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K10:unsupervised:table1",
+      "base_key": "model:K10",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D01:unsupervised:table1",
+      "base_key": "model:D01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D02:unsupervised:table1",
+      "base_key": "model:D02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D03:unsupervised:table1",
+      "base_key": "model:D03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D04:unsupervised:table1",
+      "base_key": "model:D04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D05:unsupervised:table1",
+      "base_key": "model:D05",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D06:unsupervised:table1",
+      "base_key": "model:D06",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D07:unsupervised:table1",
+      "base_key": "model:D07",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D08:unsupervised:table1",
+      "base_key": "model:D08",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D09:unsupervised:table1",
+      "base_key": "model:D09",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D10:unsupervised:table1",
+      "base_key": "model:D10",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:A01:unsupervised:table1",
+      "base_key": "model:A01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:A02:unsupervised:table1",
+      "base_key": "model:A02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:A03:unsupervised:table1",
+      "base_key": "model:A03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:A04:unsupervised:table1",
+      "base_key": "model:A04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:C25:binary:table1",
+      "base_key": "model:C25",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C25:multiclass:table1",
+      "base_key": "model:C25",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C26:binary:table1",
+      "base_key": "model:C26",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C26:multiclass:table1",
+      "base_key": "model:C26",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C27:binary:table1",
+      "base_key": "model:C27",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C27:multiclass:table1",
+      "base_key": "model:C27",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:R24:continuous:table1",
+      "base_key": "model:R24",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R25:continuous:table1",
+      "base_key": "model:R25",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R26:continuous:table1",
+      "base_key": "model:R26",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:C28:binary:table1",
+      "base_key": "model:C28",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C28:multiclass:table1",
+      "base_key": "model:C28",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C29:binary:table1",
+      "base_key": "model:C29",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C29:multiclass:table1",
+      "base_key": "model:C29",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C30:binary:table1",
+      "base_key": "model:C30",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C30:multiclass:table1",
+      "base_key": "model:C30",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C31:binary:table1",
+      "base_key": "model:C31",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:C31:multiclass:table1",
+      "base_key": "model:C31",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:R27:continuous:table1",
+      "base_key": "model:R27",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R28:continuous:table1",
+      "base_key": "model:R28",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R29:continuous:table1",
+      "base_key": "model:R29",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R30:continuous:table1",
+      "base_key": "model:R30",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R31:continuous:table1",
+      "base_key": "model:R31",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R32:continuous:table1",
+      "base_key": "model:R32",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R33:continuous:table1",
+      "base_key": "model:R33",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R34:continuous:table1",
+      "base_key": "model:R34",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R35:continuous:table1",
+      "base_key": "model:R35",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:R36:continuous:table1",
+      "base_key": "model:R36",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:K11:unsupervised:table1",
+      "base_key": "model:K11",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K12:unsupervised:table1",
+      "base_key": "model:K12",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:K13:unsupervised:table1",
+      "base_key": "model:K13",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D11:unsupervised:table1",
+      "base_key": "model:D11",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:D12:unsupervised:table1",
+      "base_key": "model:D12",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 1
+    },
+    {
+      "key": "model:T01:forecast:table1",
+      "base_key": "model:T01",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 1
+    },
+    {
+      "key": "model:T02:forecast:table1",
+      "base_key": "model:T02",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 1
+    },
+    {
+      "key": "model:T03:forecast:table1",
+      "base_key": "model:T03",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 1
+    },
+    {
+      "key": "model:T04:forecast:table1",
+      "base_key": "model:T04",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 1
+    },
+    {
+      "key": "model:T05:forecast:table1",
+      "base_key": "model:T05",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 1
+    },
+    {
+      "key": "model:N07:sequence:table1",
+      "base_key": "model:N07",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 1
+    },
+    {
+      "key": "model:N08:sequence:table1",
+      "base_key": "model:N08",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 1
+    },
+    {
+      "key": "model:N09:sequence:table1",
+      "base_key": "model:N09",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 1
+    },
+    {
+      "key": "model:H01:hmm:table1",
+      "base_key": "model:H01",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 1
+    },
+    {
+      "key": "model:H02:hmm:table1",
+      "base_key": "model:H02",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 1
+    },
+    {
+      "key": "model:H03:hmm:table1",
+      "base_key": "model:H03",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 1
+    },
+    {
+      "key": "model:N01:binary:table1",
+      "base_key": "model:N01",
+      "kind": "model",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "model:N01:multiclass:table1",
+      "base_key": "model:N01",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:N02:continuous:table1",
+      "base_key": "model:N02",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 1
+    },
+    {
+      "key": "model:N04:sequence:table1",
+      "base_key": "model:N04",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 1
+    },
+    {
+      "key": "model:N06:sequence:table1",
+      "base_key": "model:N06",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 1
+    },
+    {
+      "key": "search:grid:binary:table1",
+      "base_key": "search:grid",
+      "kind": "search",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "search:grid:multiclass:table1",
+      "base_key": "search:grid",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "search:random:binary:table1",
+      "base_key": "search:random",
+      "kind": "search",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "search:random:multiclass:table1",
+      "base_key": "search:random",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "search:genetic:binary:table1",
+      "base_key": "search:genetic",
+      "kind": "search",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "search:genetic:multiclass:table1",
+      "base_key": "search:genetic",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "search:annealing:binary:table1",
+      "base_key": "search:annealing",
+      "kind": "search",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "search:annealing:multiclass:table1",
+      "base_key": "search:annealing",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "search:tpe:binary:table1",
+      "base_key": "search:tpe",
+      "kind": "search",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "search:tpe:multiclass:table1",
+      "base_key": "search:tpe",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "reduction:pca:binary:table1",
+      "base_key": "reduction:pca",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "reduction:pca:multiclass:table1",
+      "base_key": "reduction:pca",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "reduction:truncated_svd:binary:table1",
+      "base_key": "reduction:truncated_svd",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "reduction:truncated_svd:multiclass:table1",
+      "base_key": "reduction:truncated_svd",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "reduction:fast_ica:binary:table1",
+      "base_key": "reduction:fast_ica",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "reduction:fast_ica:multiclass:table1",
+      "base_key": "reduction:fast_ica",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "reduction:gaussian_random_projection:binary:table1",
+      "base_key": "reduction:gaussian_random_projection",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "reduction:gaussian_random_projection:multiclass:table1",
+      "base_key": "reduction:gaussian_random_projection",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "reduction:kernel_pca:binary:table1",
+      "base_key": "reduction:kernel_pca",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 1
+    },
+    {
+      "key": "reduction:kernel_pca:multiclass:table1",
+      "base_key": "reduction:kernel_pca",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 1
+    },
+    {
+      "key": "model:C01:binary:table2",
+      "base_key": "model:C01",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C01:multiclass:table2",
+      "base_key": "model:C01",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C02:binary:table2",
+      "base_key": "model:C02",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C02:multiclass:table2",
+      "base_key": "model:C02",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C03:binary:table2",
+      "base_key": "model:C03",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C03:multiclass:table2",
+      "base_key": "model:C03",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C04:binary:table2",
+      "base_key": "model:C04",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C04:multiclass:table2",
+      "base_key": "model:C04",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C05:binary:table2",
+      "base_key": "model:C05",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C05:multiclass:table2",
+      "base_key": "model:C05",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C06:binary:table2",
+      "base_key": "model:C06",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C06:multiclass:table2",
+      "base_key": "model:C06",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C07:binary:table2",
+      "base_key": "model:C07",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C07:multiclass:table2",
+      "base_key": "model:C07",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C08:binary:table2",
+      "base_key": "model:C08",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C08:multiclass:table2",
+      "base_key": "model:C08",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C09:binary:table2",
+      "base_key": "model:C09",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C09:multiclass:table2",
+      "base_key": "model:C09",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C10:binary:table2",
+      "base_key": "model:C10",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C10:multiclass:table2",
+      "base_key": "model:C10",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C11:binary:table2",
+      "base_key": "model:C11",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C11:multiclass:table2",
+      "base_key": "model:C11",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C12:binary:table2",
+      "base_key": "model:C12",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C12:multiclass:table2",
+      "base_key": "model:C12",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C13:binary:table2",
+      "base_key": "model:C13",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C13:multiclass:table2",
+      "base_key": "model:C13",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C14:binary:table2",
+      "base_key": "model:C14",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C14:multiclass:table2",
+      "base_key": "model:C14",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C15:binary:table2",
+      "base_key": "model:C15",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C15:multiclass:table2",
+      "base_key": "model:C15",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C16:binary:table2",
+      "base_key": "model:C16",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C16:multiclass:table2",
+      "base_key": "model:C16",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C17:binary:table2",
+      "base_key": "model:C17",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C17:multiclass:table2",
+      "base_key": "model:C17",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C18:binary:table2",
+      "base_key": "model:C18",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C18:multiclass:table2",
+      "base_key": "model:C18",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C19:binary:table2",
+      "base_key": "model:C19",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C19:multiclass:table2",
+      "base_key": "model:C19",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C20:binary:table2",
+      "base_key": "model:C20",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C20:multiclass:table2",
+      "base_key": "model:C20",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C21:binary:table2",
+      "base_key": "model:C21",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C21:multiclass:table2",
+      "base_key": "model:C21",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C22:binary:table2",
+      "base_key": "model:C22",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C22:multiclass:table2",
+      "base_key": "model:C22",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C23:binary:table2",
+      "base_key": "model:C23",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C23:multiclass:table2",
+      "base_key": "model:C23",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C24:binary:table2",
+      "base_key": "model:C24",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C24:multiclass:table2",
+      "base_key": "model:C24",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:R01:continuous:table2",
+      "base_key": "model:R01",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R02:continuous:table2",
+      "base_key": "model:R02",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R03:continuous:table2",
+      "base_key": "model:R03",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R04:continuous:table2",
+      "base_key": "model:R04",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R05:continuous:table2",
+      "base_key": "model:R05",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R06:continuous:table2",
+      "base_key": "model:R06",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R07:continuous:table2",
+      "base_key": "model:R07",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R08:continuous:table2",
+      "base_key": "model:R08",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R09:continuous:table2",
+      "base_key": "model:R09",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R10:continuous:table2",
+      "base_key": "model:R10",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R11:continuous:table2",
+      "base_key": "model:R11",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R12:continuous:table2",
+      "base_key": "model:R12",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R13:continuous:table2",
+      "base_key": "model:R13",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R14:continuous:table2",
+      "base_key": "model:R14",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R15:continuous:table2",
+      "base_key": "model:R15",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R16:continuous:table2",
+      "base_key": "model:R16",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R17:continuous:table2",
+      "base_key": "model:R17",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R18:continuous:table2",
+      "base_key": "model:R18",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R19:continuous:table2",
+      "base_key": "model:R19",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R20:continuous:table2",
+      "base_key": "model:R20",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R21:count:table2",
+      "base_key": "model:R21",
+      "kind": "model",
+      "profile": "count",
+      "table": 2
+    },
+    {
+      "key": "model:R22:continuous:table2",
+      "base_key": "model:R22",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R23:continuous:table2",
+      "base_key": "model:R23",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:K01:unsupervised:table2",
+      "base_key": "model:K01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K02:unsupervised:table2",
+      "base_key": "model:K02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K03:unsupervised:table2",
+      "base_key": "model:K03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K04:unsupervised:table2",
+      "base_key": "model:K04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K05:unsupervised:table2",
+      "base_key": "model:K05",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K06:unsupervised:table2",
+      "base_key": "model:K06",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K07:unsupervised:table2",
+      "base_key": "model:K07",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K08:unsupervised:table2",
+      "base_key": "model:K08",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K09:unsupervised:table2",
+      "base_key": "model:K09",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K10:unsupervised:table2",
+      "base_key": "model:K10",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D01:unsupervised:table2",
+      "base_key": "model:D01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D02:unsupervised:table2",
+      "base_key": "model:D02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D03:unsupervised:table2",
+      "base_key": "model:D03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D04:unsupervised:table2",
+      "base_key": "model:D04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D05:unsupervised:table2",
+      "base_key": "model:D05",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D06:unsupervised:table2",
+      "base_key": "model:D06",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D07:unsupervised:table2",
+      "base_key": "model:D07",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D08:unsupervised:table2",
+      "base_key": "model:D08",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D09:unsupervised:table2",
+      "base_key": "model:D09",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D10:unsupervised:table2",
+      "base_key": "model:D10",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:A01:unsupervised:table2",
+      "base_key": "model:A01",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:A02:unsupervised:table2",
+      "base_key": "model:A02",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:A03:unsupervised:table2",
+      "base_key": "model:A03",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:A04:unsupervised:table2",
+      "base_key": "model:A04",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:C25:binary:table2",
+      "base_key": "model:C25",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C25:multiclass:table2",
+      "base_key": "model:C25",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C26:binary:table2",
+      "base_key": "model:C26",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C26:multiclass:table2",
+      "base_key": "model:C26",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C27:binary:table2",
+      "base_key": "model:C27",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C27:multiclass:table2",
+      "base_key": "model:C27",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:R24:continuous:table2",
+      "base_key": "model:R24",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R25:continuous:table2",
+      "base_key": "model:R25",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R26:continuous:table2",
+      "base_key": "model:R26",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:C28:binary:table2",
+      "base_key": "model:C28",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C28:multiclass:table2",
+      "base_key": "model:C28",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C29:binary:table2",
+      "base_key": "model:C29",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C29:multiclass:table2",
+      "base_key": "model:C29",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C30:binary:table2",
+      "base_key": "model:C30",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C30:multiclass:table2",
+      "base_key": "model:C30",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:C31:binary:table2",
+      "base_key": "model:C31",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:C31:multiclass:table2",
+      "base_key": "model:C31",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:R27:continuous:table2",
+      "base_key": "model:R27",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R28:continuous:table2",
+      "base_key": "model:R28",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R29:continuous:table2",
+      "base_key": "model:R29",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R30:continuous:table2",
+      "base_key": "model:R30",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R31:continuous:table2",
+      "base_key": "model:R31",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R32:continuous:table2",
+      "base_key": "model:R32",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R33:continuous:table2",
+      "base_key": "model:R33",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R34:continuous:table2",
+      "base_key": "model:R34",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R35:continuous:table2",
+      "base_key": "model:R35",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:R36:continuous:table2",
+      "base_key": "model:R36",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:K11:unsupervised:table2",
+      "base_key": "model:K11",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K12:unsupervised:table2",
+      "base_key": "model:K12",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:K13:unsupervised:table2",
+      "base_key": "model:K13",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D11:unsupervised:table2",
+      "base_key": "model:D11",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:D12:unsupervised:table2",
+      "base_key": "model:D12",
+      "kind": "model",
+      "profile": "unsupervised",
+      "table": 2
+    },
+    {
+      "key": "model:T01:forecast:table2",
+      "base_key": "model:T01",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 2
+    },
+    {
+      "key": "model:T02:forecast:table2",
+      "base_key": "model:T02",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 2
+    },
+    {
+      "key": "model:T03:forecast:table2",
+      "base_key": "model:T03",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 2
+    },
+    {
+      "key": "model:T04:forecast:table2",
+      "base_key": "model:T04",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 2
+    },
+    {
+      "key": "model:T05:forecast:table2",
+      "base_key": "model:T05",
+      "kind": "model",
+      "profile": "forecast",
+      "table": 2
+    },
+    {
+      "key": "model:N07:sequence:table2",
+      "base_key": "model:N07",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 2
+    },
+    {
+      "key": "model:N08:sequence:table2",
+      "base_key": "model:N08",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 2
+    },
+    {
+      "key": "model:N09:sequence:table2",
+      "base_key": "model:N09",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 2
+    },
+    {
+      "key": "model:H01:hmm:table2",
+      "base_key": "model:H01",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 2
+    },
+    {
+      "key": "model:H02:hmm:table2",
+      "base_key": "model:H02",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 2
+    },
+    {
+      "key": "model:H03:hmm:table2",
+      "base_key": "model:H03",
+      "kind": "model",
+      "profile": "hmm",
+      "table": 2
+    },
+    {
+      "key": "model:N01:binary:table2",
+      "base_key": "model:N01",
+      "kind": "model",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "model:N01:multiclass:table2",
+      "base_key": "model:N01",
+      "kind": "model",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "model:N02:continuous:table2",
+      "base_key": "model:N02",
+      "kind": "model",
+      "profile": "continuous",
+      "table": 2
+    },
+    {
+      "key": "model:N04:sequence:table2",
+      "base_key": "model:N04",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 2
+    },
+    {
+      "key": "model:N06:sequence:table2",
+      "base_key": "model:N06",
+      "kind": "model",
+      "profile": "sequence",
+      "table": 2
+    },
+    {
+      "key": "search:grid:binary:table2",
+      "base_key": "search:grid",
+      "kind": "search",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "search:grid:multiclass:table2",
+      "base_key": "search:grid",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "search:random:binary:table2",
+      "base_key": "search:random",
+      "kind": "search",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "search:random:multiclass:table2",
+      "base_key": "search:random",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "search:genetic:binary:table2",
+      "base_key": "search:genetic",
+      "kind": "search",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "search:genetic:multiclass:table2",
+      "base_key": "search:genetic",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "search:annealing:binary:table2",
+      "base_key": "search:annealing",
+      "kind": "search",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "search:annealing:multiclass:table2",
+      "base_key": "search:annealing",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "search:tpe:binary:table2",
+      "base_key": "search:tpe",
+      "kind": "search",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "search:tpe:multiclass:table2",
+      "base_key": "search:tpe",
+      "kind": "search",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "reduction:pca:binary:table2",
+      "base_key": "reduction:pca",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "reduction:pca:multiclass:table2",
+      "base_key": "reduction:pca",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "reduction:truncated_svd:binary:table2",
+      "base_key": "reduction:truncated_svd",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "reduction:truncated_svd:multiclass:table2",
+      "base_key": "reduction:truncated_svd",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "reduction:fast_ica:binary:table2",
+      "base_key": "reduction:fast_ica",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "reduction:fast_ica:multiclass:table2",
+      "base_key": "reduction:fast_ica",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "reduction:gaussian_random_projection:binary:table2",
+      "base_key": "reduction:gaussian_random_projection",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "reduction:gaussian_random_projection:multiclass:table2",
+      "base_key": "reduction:gaussian_random_projection",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 2
+    },
+    {
+      "key": "reduction:kernel_pca:binary:table2",
+      "base_key": "reduction:kernel_pca",
+      "kind": "reduction",
+      "profile": "binary",
+      "table": 2
+    },
+    {
+      "key": "reduction:kernel_pca:multiclass:table2",
+      "base_key": "reduction:kernel_pca",
+      "kind": "reduction",
+      "profile": "multiclass",
+      "table": 2
+    }
+  ]
+}

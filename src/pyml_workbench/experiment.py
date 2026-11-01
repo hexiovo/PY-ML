@@ -1029,7 +1029,17 @@ def prepare_experiment(
         record_event("preprocessor_fit_train_only")
         x_validation_ready = preprocessor.transform(x_validation) if len(validation_idx) else None
         if config.task in {"classification", "regression"}:
-            estimator.fit(x_train_ready, y_train.to_numpy())
+            if getattr(estimator, "kind", None) == "stacking" and config.split.strategy == "group":
+                if snapshot is None or snapshot.structure is None:
+                    raise ExperimentError("Grouped stacking requires owned group metadata")
+                train_groups = snapshot.structure.iloc[train_idx][config.split.group_column].to_numpy()
+                estimator.fit(x_train_ready, y_train.to_numpy(), groups=train_groups)
+                preprocessing["inner_cv"] = {
+                    "strategy": "GroupKFold", "group_column": config.split.group_column,
+                    "folds": estimator.inner_cv_audit_,
+                }
+            else:
+                estimator.fit(x_train_ready, y_train.to_numpy())
             record_event("estimator_fit_train_only")
         elif config.task == "clustering":
             capabilities = model_capabilities(config.model_id, estimator)

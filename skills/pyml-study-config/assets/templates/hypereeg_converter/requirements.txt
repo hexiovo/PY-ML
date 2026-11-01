@@ -1,0 +1,3 @@
+# Install the selected HyperEEG plugin's own pinned dependencies as well.
+PySide6==6.11.2
+pandas==3.0.6

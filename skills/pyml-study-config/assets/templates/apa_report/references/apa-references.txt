@@ -1,0 +1,30 @@
+
+Bergstra, J., & Bengio, Y. (2012). Random search for hyper-parameter optimization. Journal of Machine Learning Research, 13, 281–305. https://jmlr.org/papers/v13/bergstra12a.html
+
+Breiman, L. (2001). Random forests. Machine Learning, 45, 5–32. https://doi.org/10.1023/A:1010933404324
+
+CatBoost developers. (n.d.). How training is performed. CatBoost documentation. Retrieved November 1, 2026, from https://catboost.ai/docs/en/concepts/algorithm-main-stages
+
+Hmmlearn developers. (n.d.). Tutorial. Hmmlearn documentation. Retrieved November 1, 2026, from https://hmmlearn.readthedocs.io/en/stable/tutorial.html
+
+LightGBM developers. (n.d.). Features. LightGBM documentation. Retrieved November 1, 2026, from https://lightgbm.readthedocs.io/en/stable/Features.html
+
+Optuna contributors. (n.d.). optuna.samplers.TPESampler. Optuna documentation. Retrieved November 1, 2026, from https://optuna.readthedocs.io/en/stable/reference/samplers/generated/optuna.samplers.TPESampler.html
+
+Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., & Duchesnay, É. (2011). Scikit-learn: Machine learning in Python. Journal of Machine Learning Research, 12, 2825–2830. https://jmlr.org/papers/v12/pedregosa11a.html
+
+PyTorch contributors. (n.d.). torch.nn. PyTorch 2.14 documentation. Retrieved November 1, 2026, from https://docs.pytorch.org/docs/2.14/nn.html
+
+Scikit-learn developers. (n.d.). User guide. Scikit-learn documentation. Retrieved November 1, 2026, from https://scikit-learn.org/stable/user_guide.html
+
+Skorch developers. (n.d.). NeuralNetRegressor. Skorch documentation. Retrieved November 1, 2026, from https://skorch.readthedocs.io/en/stable/regressor.html
+
+Statsmodels developers. (n.d.). Time series analysis tsa. Statsmodels documentation. Retrieved November 1, 2026, from https://www.statsmodels.org/stable/tsa.html
+
+UMAP developers. (n.d.). How UMAP works. UMAP documentation. Retrieved November 1, 2026, from https://umap-learn.readthedocs.io/en/latest/how_umap_works.html
+
+van der Maaten, L., & Hinton, G. (2008). Visualizing data using t-SNE. Journal of Machine Learning Research, 9, 2579–2605. https://jmlr.org/papers/v9/vandermaaten08a.html
+
+Varoquaux, G., Raamana, P. R., Engemann, D. A., Hoyos-Idrobo, A., Schwartz, Y., & Thirion, B. (2017). Assessing and tuning brain decoders: Cross-validation, caveats, and guidelines. NeuroImage, 145, 166–179. https://doi.org/10.1016/j.neuroimage.2016.10.038
+
+XGBoost developers. (n.d.). Introduction to boosted trees. XGBoost documentation. Retrieved November 1, 2026, from https://xgboost.readthedocs.io/en/stable/tutorials/model.html

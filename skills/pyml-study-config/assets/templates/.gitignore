@@ -1,0 +1,8 @@
+**/__pycache__/
+**/*.pyc
+**/*.local.json
+**/settings.json
+**/latest-run.json
+**/launcher*.log
+**/last-error.log
+**/ui-validation/

@@ -1,0 +1,26 @@
+{
+  "source_scope": "previously validated linked-native conversion adapter and completed interface report",
+  "external_plugin_reference": "https://github.com/hexiovo/PY-ML_support_trans",
+  "converter_payload_unchanged": true,
+  "text_hash_normalization": "UTF-8 LF with one final newline",
+  "converter_source_sha256": {
+    "convert.py": "435c64ab91f5de5b3eb399402704765efb9ba50acc7bd9175bf73ec05ccd0cac",
+    "gui.py": "c8fcbc1626dd540fb099544bed519f4cc7bc586e8a0d32f365876efed71f2c55",
+    "progress.py": "221aad9547b351401b6d3ee7a8a2ce0227ac2025a23967fb25c9e4588859829b",
+    "streaming.py": "341a31736eb58442fbebf47000ce59d780f67219d5aeadd9f69b33cbb27e8c97",
+    "export_linked.m": "0719ca41eceafefb6ee9ae6164d6a11c36b509ba478c8f4e9ecd47db15b929b2",
+    "export_loaded_table.m": "bbed188021bd3a2ef8648efa72d075207d826af3fca04f6264e649bcc7e2aa1b"
+  },
+  "template_changes": [
+    "runtime-selected paths",
+    "external private configuration workspace",
+    "relative CMD entry points",
+    "anonymized report metadata and run identifier",
+    "fillable APA scaffold and aggregate-only plotting inputs"
+  ],
+  "raw_EEG_or_native_identity_included": false,
+  "source_report_numbers_preserved": true,
+  "new_native_conversion": "NOT RUN",
+  "new_model_fit": "NOT RUN",
+  "final_test_calls": 0
+}

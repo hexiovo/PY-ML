@@ -1,0 +1,7 @@
+python-docx==1.2.0
+numpy==2.5.4
+pandas==3.0.6
+matplotlib==3.11.2
+# Optional PDF inspection and image tools:
+pymupdf==2.0
+Pillow==13.0.0

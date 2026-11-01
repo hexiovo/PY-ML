@@ -1,0 +1,84 @@
+{
+  "status": "PASS_for_template_distribution",
+  "conversion_launcher": {
+    "status": "PASS",
+    "configuration_roundtrip_outside_skill": true,
+    "budget_override_preserved": true,
+    "invalid_configs_rejected": 4,
+    "converter_fixed_UI_smoke": true,
+    "conversion_CMD_setup_smoke": true,
+    "report_CMD_setup_smoke": true,
+    "unchanged_converter_payload_files": [
+      "convert.py",
+      "gui.py",
+      "progress.py",
+      "streaming.py",
+      "export_linked.m",
+      "export_loaded_table.m"
+    ],
+    "native_MAT_conversion": "NOT RUN",
+    "model_fitting": "NOT RUN",
+    "scientific_final_test_calls": 0,
+    "CMD_relocated_to_unicode_and_space_directory": true,
+    "source_equivalence_normalization": "UTF-8 LF with one final newline"
+  },
+  "figures": {
+    "status": "PASS",
+    "figure_count": 14,
+    "unchanged_example_pngs": {
+      "classification_binary_table1.png": true,
+      "classification_binary_table2.png": true,
+      "classification_multiclass_table1.png": true,
+      "classification_multiclass_table2.png": true,
+      "continuous_predictions.png": true,
+      "continuous_table1.png": true,
+      "continuous_table2.png": true,
+      "count_predictions.png": true,
+      "coverage.png": true,
+      "feature_importance_examples.png": true,
+      "forecast_comparison.png": true,
+      "forecast_examples.png": true,
+      "real_pca.png": true,
+      "sequence_comparison.png": true
+    },
+    "model_fitting": "NOT RUN"
+  },
+  "documents": {
+    "status": "PASS",
+    "documents": [
+      {
+        "document": "apa_report_example",
+        "pages": 46,
+        "embedded_images": 14,
+        "outside_margin_blocks": 0,
+        "personal_metadata_empty": true
+      },
+      {
+        "document": "apa_report_template",
+        "pages": 19,
+        "embedded_images": 0,
+        "outside_margin_blocks": 0,
+        "personal_metadata_empty": true
+      }
+    ]
+  },
+  "document_visual_review": "Example title and all template contact sheets reviewed; figure caption continuation corrected and checked",
+  "grouped_stacking_synthetic_checks": {
+    "binary": "PASS",
+    "multiclass": "PASS",
+    "regression": "PASS",
+    "ordinary_path": "PASS",
+    "OOF_rows_once_and_disjoint_groups": "PASS"
+  },
+  "private_paths_in_template": false,
+  "new_real_EEG_conversion": "NOT RUN",
+  "new_real_EEG_model_fit": "NOT RUN",
+  "scientific_final_test_calls": 0,
+  "privacy": {
+    "status": "PASS",
+    "files_scanned": 87,
+    "docx_scanned": 2,
+    "pdf_scanned": 16,
+    "issues": []
+  }
+}

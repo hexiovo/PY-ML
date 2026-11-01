@@ -4,6 +4,8 @@
 
 ## 配置对象
 
+HyperEEG/PYfNIRs 还有独立于 `ExperimentConfig` 的外部转换插件，详见 `plugins.md`。其原生参数只交给转换器；“配置没有转换字段”不表示整个工作台没有转换入口。已计算特征可先经插件整理成表，再交给 PYML 读取。
+
 当前 `ExperimentConfig` 原生顶层字段：
 
 - 必需：`dataset`、`task`、`model_id`
@@ -50,3 +52,8 @@ HMM 与 N04/N06/N07/N08/N09 使用 `SequenceConfig` / `SequencePlan` 描述组�
 ## 快照与重新核实
 
 快照中的 dataclass、模型清单、参数 schema 和源码 SHA-256 是起草参考。使用当前项目显式导出后，检查 import 路径和源码哈希；缺依赖、文件或导入错误时如实报告 `NOT VERIFIED`。配置解析、模型参数构造、输入列头预览、合成数据行为、真实数据检查、推断统计执行是不同证据层级，不能相互替代。`check_bundle.py` 不拟合模型、不查看测试指标、不验证研究设计，也不授予 `ready_for_execution`。
+
+
+## 分组堆叠扩展核验
+
+经核验的PYML源码修订为 ConfigurableClassifier/Regressor.fit 增加可选 groups；仅 stacking 在有分组时建立 GroupKFold，普通非分组调用保持原路径。prepare_experiment 的group外层划分会传递拥有的训练组元数据，结果 preprocessing.inner_cv 保存折内组和行位置审计。成员填补/缩放保留在各成员管线，内折重新拟合。C30二/三分类、R29连续回归均实际验证；另有普通路径兼容和内层OOF逐行恰好一次检查。此为已核验源码版本的能力说明，不能推断其他PYML安装同样具备；迁移须重新检查源代码/公开契约，不可凭本节硬填未支持参数。具体运行的源码指纹与验证应保存在用户侧冻结manifest及verification，不写入公共模板。
