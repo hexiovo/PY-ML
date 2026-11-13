@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 from pyml_workbench.plugin_dialog import PluginSettingsDialog
 from pyml_workbench.plugins import (
     HYPEREEG_SOURCE,
+    PYEDA_SOURCE,
     PYFNIRS_SOURCE,
     PluginError,
     PluginSettings,
@@ -210,7 +211,7 @@ class PluginMenuIntegrationTest(unittest.TestCase):
         self.application.processEvents()
         self.temporary.cleanup()
 
-    def test_plugin_conversion_is_a_submenu_sharing_both_source_actions(self) -> None:
+    def test_plugin_conversion_is_a_submenu_sharing_source_actions(self) -> None:
         menu = next(action.menu() for action in self.window.menuBar().actions()
                     if action.text() == "插件")
         conversion = menu.actions()[0]
@@ -220,24 +221,28 @@ class PluginMenuIntegrationTest(unittest.TestCase):
         self.assertEqual(conversion.menu().actions(), [
             self.window.hypereeg_conversion_action,
             self.window.pyfnirs_conversion_action,
+            self.window.pyeda_conversion_action,
         ])
         self.assertIs(self.window.data_conversion_action, conversion)
 
     def test_submenu_actions_launch_only_the_selected_source(self) -> None:
         hypereeg = self.root / "hypereeg"
         pyfnirs = self.root / "pyfnirs"
+        pyeda = self.root / "pyeda"
         _write_plugin(hypereeg, include_source=False)
         _write_plugin(pyfnirs, source_project=PYFNIRS_SOURCE)
+        _write_plugin(pyeda, source_project=PYEDA_SOURCE)
         self.window.plugin_settings_store.save(PluginSettings(str(hypereeg)), HYPEREEG_SOURCE)
         self.window.plugin_settings_store.save(PluginSettings(str(pyfnirs)), PYFNIRS_SOURCE)
+        self.window.plugin_settings_store.save(PluginSettings(str(pyeda)), PYEDA_SOURCE)
         menu = next(action.menu() for action in self.window.menuBar().actions()
                     if action.text() == "插件")
         menu.aboutToShow.emit()
         with patch("pyml_workbench.gui.QProcess.startDetached", return_value=(True, 1)) as launch:
-            for action, directory in zip(menu.actions()[0].menu().actions(), (hypereeg, pyfnirs)):
+            for action, directory in zip(menu.actions()[0].menu().actions(), (hypereeg, pyfnirs, pyeda), strict=True):
                 action.trigger()
                 launch.assert_called_with(str(directory / "DataConversion.exe"), [], str(directory))
-            self.assertEqual(launch.call_count, 2)
+            self.assertEqual(launch.call_count, 3)
 
     def test_both_actions_start_disabled_and_unified_dialog_saves_both_immediately(self) -> None:
         self.assertEqual(self.window.format_menu.title(), "格式")
@@ -340,13 +345,15 @@ class PluginMenuIntegrationTest(unittest.TestCase):
         self.assertFalse(self.window.pyfnirs_conversion_action.isEnabled())
         self.assertIn("来源标识不匹配", self.window.pyfnirs_conversion_action.toolTip())
 
-    def test_dialog_contains_both_sources_on_one_page(self) -> None:
+    def test_dialog_contains_all_sources_on_one_page(self) -> None:
         dialog = PluginSettingsDialog(self.window.plugin_settings_store, self.window)
         try:
             self.assertEqual(dialog.windowTitle(), "插件设置")
             self.assertIn(HYPEREEG_SOURCE, dialog.directory_edits)
             self.assertIn(PYFNIRS_SOURCE, dialog.directory_edits)
-            self.assertIn("同时管理 HyperEEG 和 PYfNIRs", dialog.explanation_label.text())
+            self.assertIn(PYEDA_SOURCE, dialog.directory_edits)
+            for source in (HYPEREEG_SOURCE, PYFNIRS_SOURCE, PYEDA_SOURCE):
+                self.assertIn(source, dialog.explanation_label.text())
         finally:
             dialog.close()
 
