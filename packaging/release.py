@@ -51,6 +51,8 @@ def main():
     assert (skill_source / 'SKILL.md').is_file(), 'missing study configuration skill'
     shutil.copytree(skill_source, folder / 'skills/pyml-study-config', dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    shutil.copytree(root / 'examples/pyeda', folder / 'examples/pyeda', dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     portable_skill = root / 'dist/pyml-study-config-portable.md'
     if portable_skill.is_file():
         shutil.copy2(portable_skill, folder / 'skills/pyml-study-config-portable.md')

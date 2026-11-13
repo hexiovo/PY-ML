@@ -15,6 +15,7 @@ PLUGIN_SCHEMA_VERSION = 2
 LEGACY_PLUGIN_SCHEMA_VERSION = 1
 HYPEREEG_SOURCE = "HyperEEG"
 PYFNIRS_SOURCE = "PYfNIRs"
+PYEDA_SOURCE = "PYEDA"
 
 
 class PluginError(ValueError):
@@ -241,7 +242,11 @@ class DetectedPlugin:
 
 def discover_bundled_conversion(source_project: str) -> PluginSettings:
     """Find a valid sibling support release for optional legacy callers."""
-    folder = {HYPEREEG_SOURCE: "hypereeg", PYFNIRS_SOURCE: "pyfnirs"}[source_project]
+    folder = {
+        HYPEREEG_SOURCE: "hypereeg",
+        PYFNIRS_SOURCE: "pyfnirs",
+        PYEDA_SOURCE: "pyeda",
+    }[source_project]
     anchors = (Path(sys.executable).resolve().parent, Path(__file__).resolve().parent)
     for anchor in anchors:
         for parent in (anchor, *anchor.parents):
@@ -290,6 +295,11 @@ def detect_pyfnirs_data_conversion(settings: PluginSettings) -> DetectedPlugin:
     return _detect_data_conversion(settings, required_source_project=PYFNIRS_SOURCE)
 
 
+def detect_pyeda_data_conversion(settings: PluginSettings) -> DetectedPlugin:
+    """Detect only the PYEDA source-marked data-conversion release."""
+    return _detect_data_conversion(settings, required_source_project=PYEDA_SOURCE)
+
+
 def _detect_data_conversion(
     settings: PluginSettings,
     *,
@@ -305,6 +315,10 @@ def _detect_data_conversion(
         if required_source_project == HYPEREEG_SOURCE:
             raise PluginError(
                 "未配置 HyperEEG 插件目录，请在“插件 → 设置…”中选择目录。"
+            )
+        if required_source_project == PYEDA_SOURCE:
+            raise PluginError(
+                "未配置 PYEDA 插件目录，请在“插件 → 设置…”中选择目录。"
             )
         raise PluginError("未配置插件目录，请在“插件 → 设置…”中选择目录。")
     try:

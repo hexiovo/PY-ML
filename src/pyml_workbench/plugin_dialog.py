@@ -20,11 +20,13 @@ from PySide6.QtWidgets import (
 
 from .plugins import (
     HYPEREEG_SOURCE,
+    PYEDA_SOURCE,
     PYFNIRS_SOURCE,
     PluginError,
     PluginSettings,
     PluginSettingsStore,
     detect_hypereeg_data_conversion,
+    detect_pyeda_data_conversion,
     detect_pyfnirs_data_conversion,
 )
 
@@ -32,6 +34,7 @@ from .plugins import (
 _SOURCES = (
     (HYPEREEG_SOURCE, detect_hypereeg_data_conversion),
     (PYFNIRS_SOURCE, detect_pyfnirs_data_conversion),
+    (PYEDA_SOURCE, detect_pyeda_data_conversion),
 )
 
 
@@ -52,7 +55,7 @@ class PluginSettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         self.explanation_label = QLabel(
-            "在此同时管理 HyperEEG 和 PYfNIRs 插件来源。每项配置独立保存；"
+            "在此同时管理 HyperEEG、PYfNIRs 和 PYEDA 插件来源。每项配置独立保存；"
             "未配置或检查无效的入口保持灰色，保存有效设置后立即启用。"
         )
         self.explanation_label.setWordWrap(True)

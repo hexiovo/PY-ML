@@ -20,9 +20,11 @@ Windows 用户请从 [GitHub 最新 Release](https://github.com/hexiovo/PY-ML/re
 
 ### 数据转换插件
 
-“格式 → 数据转换”提供 HyperEEG 与 PYfNIRs 转换入口，并通过“插件设置…”管理插件路径。首次打开时入口默认不可用；选择包含 `pyml-plugin.json` 的插件目录并保存，程序检查通过后启用对应入口。插件设置在重启后保留，路径失效时入口会停用并显示原因。
+“格式 → 数据转换”提供 HyperEEG、PYfNIRs 与 PYEDA 转换入口，并通过“插件设置…”管理插件路径。首次打开时入口默认不可用；选择包含 `pyml-plugin.json` 的插件目录并保存，程序检查通过后启用对应入口。插件设置在重启后保留，路径失效时入口会停用并显示原因。
 
-转换器独立于主程序发布，请从[转换插件仓库](https://github.com/hexiovo/PY-ML_support_trans)获取相应发行目录。主程序包不包含这两个转换器的实现。
+[PYEDA 转换示例](examples/pyeda/README.md)可运行合成示例或整理自有 PYEDA 结果包。[PYEDA 插件源码](https://github.com/hexiovo/PY-ML_support_trans/tree/master/pyeda)及其 Windows 发行包独立发布。
+
+转换器独立于主程序发布，请从[转换插件仓库](https://github.com/hexiovo/PY-ML_support_trans)获取相应发行目录。主程序包不包含这些转换器的实现。
 
 ### 运行环境
 

@@ -38,10 +38,12 @@ from .checkpoints import CheckpointError, load_checkpoint, save_checkpoint
 from .runtime import worker_command
 from .plugins import (
     HYPEREEG_SOURCE,
+    PYEDA_SOURCE,
     PYFNIRS_SOURCE,
     PluginError,
     PluginSettingsStore,
     detect_hypereeg_data_conversion,
+    detect_pyeda_data_conversion,
     detect_pyfnirs_data_conversion,
 )
 from .run_timing import (
@@ -1229,6 +1231,7 @@ class WorkbenchWindow(QMainWindow):
         self._load_preferences()
         self.refresh_plugins()
         self.refresh_pyfnirs_plugin()
+        self.refresh_pyeda_plugin()
         self._interaction_filter = _InteractionEventFilter(
             QApplication.instance(), self.logging_controller, self
         )
@@ -1427,6 +1430,11 @@ class WorkbenchWindow(QMainWindow):
             self.open_pyfnirs_data_conversion
         )
         self.data_conversion_menu.addAction(self.pyfnirs_conversion_action)
+        self.pyeda_conversion_action = QAction("PYEDA", self)
+        self.pyeda_conversion_action.setObjectName("pyedaConversionAction")
+        self.pyeda_conversion_action.setEnabled(False)
+        self.pyeda_conversion_action.triggered.connect(self.open_pyeda_data_conversion)
+        self.data_conversion_menu.addAction(self.pyeda_conversion_action)
         self.data_conversion_menu.addSeparator()
         self.conversion_plugin_settings_action = QAction("插件设置…", self)
         self.conversion_plugin_settings_action.setObjectName(
@@ -1437,13 +1445,16 @@ class WorkbenchWindow(QMainWindow):
         )
         self.data_conversion_menu.addAction(self.conversion_plugin_settings_action)
         self.format_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        self.format_menu.aboutToShow.connect(self.refresh_pyeda_plugin)
         self.data_conversion_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        self.data_conversion_menu.aboutToShow.connect(self.refresh_pyeda_plugin)
         self.format_menu.aboutToShow.connect(self.refresh_plugins)
         self.data_conversion_menu.aboutToShow.connect(self.refresh_plugins)
         plugin_menu = self.menuBar().addMenu("插件")
         self.plugin_conversion_menu = plugin_menu.addMenu("数据转换")
         self.plugin_conversion_menu.addAction(self.hypereeg_conversion_action)
         self.plugin_conversion_menu.addAction(self.pyfnirs_conversion_action)
+        self.plugin_conversion_menu.addAction(self.pyeda_conversion_action)
         self.data_conversion_action = self.plugin_conversion_menu.menuAction()
         self.data_conversion_action.setObjectName("dataConversionAction")
         plugin_menu.addSeparator()
@@ -1453,8 +1464,10 @@ class WorkbenchWindow(QMainWindow):
         plugin_menu.addAction(self.plugin_settings_action)
         plugin_menu.aboutToShow.connect(self.refresh_plugins)
         plugin_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        plugin_menu.aboutToShow.connect(self.refresh_pyeda_plugin)
         self.plugin_conversion_menu.aboutToShow.connect(self.refresh_plugins)
         self.plugin_conversion_menu.aboutToShow.connect(self.refresh_pyfnirs_plugin)
+        self.plugin_conversion_menu.aboutToShow.connect(self.refresh_pyeda_plugin)
         help_menu = self.menuBar().addMenu("帮助")
         self.overall_guide_action = QAction("操作指南", self)
         self.overall_guide_action.setShortcut("F1")
@@ -1500,15 +1513,31 @@ class WorkbenchWindow(QMainWindow):
                 f"{pyfnirs_plugin.name} {pyfnirs_plugin.version}"
             )
 
+    def refresh_pyeda_plugin(self) -> None:
+        try:
+            pyeda_plugin = detect_pyeda_data_conversion(
+                self.plugin_settings_store.load(PYEDA_SOURCE)
+            )
+        except PluginError as exc:
+            self.pyeda_conversion_action.setEnabled(False)
+            self.pyeda_conversion_action.setToolTip(str(exc))
+        else:
+            self.pyeda_conversion_action.setEnabled(True)
+            self.pyeda_conversion_action.setToolTip(
+                f"{pyeda_plugin.name} {pyeda_plugin.version}"
+            )
+
     def show_plugin_settings(self) -> None:
         from .plugin_dialog import PluginSettingsDialog
 
         dialog = PluginSettingsDialog(self.plugin_settings_store, self)
         dialog.settings_saved.connect(self.refresh_plugins)
         dialog.settings_saved.connect(self.refresh_pyfnirs_plugin)
+        dialog.settings_saved.connect(self.refresh_pyeda_plugin)
         dialog.exec()
         self.refresh_plugins()
         self.refresh_pyfnirs_plugin()
+        self.refresh_pyeda_plugin()
         dialog.deleteLater()
 
     def open_data_conversion(self) -> None:
@@ -1546,6 +1575,25 @@ class WorkbenchWindow(QMainWindow):
                 self,
                 "无法启动 PYfNIRs 转换器",
                 "请检查 PYfNIRs 专用发行目录与真实启动文件，并在“插件 → 设置…”中重新选择。",
+            )
+
+    def open_pyeda_data_conversion(self) -> None:
+        try:
+            plugin = detect_pyeda_data_conversion(
+                self.plugin_settings_store.load(PYEDA_SOURCE)
+            )
+        except PluginError as exc:
+            self.refresh_pyeda_plugin()
+            QMessageBox.warning(self, "PYEDA 转换不可用", str(exc))
+            return
+        started, _pid = QProcess.startDetached(
+            plugin.program, list(plugin.arguments), str(plugin.directory)
+        )
+        if not started:
+            QMessageBox.warning(
+                self,
+                "无法启动 PYEDA 转换器",
+                "请检查 PYEDA 插件目录和 Python 程序，并在“插件 → 设置…”中重新选择。",
             )
 
     def show_environment_check(self) -> None:

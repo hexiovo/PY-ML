@@ -52,7 +52,7 @@ from .search_space import SearchSpace, recommended_space
 from .sequence import SequenceConfig, SequenceError, SequencePlan
 from .selection import FinalSelection, FrozenSelection
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 
 __all__ = [
     "BatchError",

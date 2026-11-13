@@ -18,7 +18,7 @@
 
 ## 接入契约与交付文件
 
-PYML 0.4.6 检查插件清单 `schema_version=1`、`id="data-conversion"`、非空 `name/version` 和 `entrypoint`。入口 `kind` 为 `executable` 或 `python`，`path` 必须是目录内实际 `.exe` 或 `.py` 的相对路径。PYfNIRs 必须声明 `source_project="PYfNIRs"`；HyperEEG 使用 `source_project="HyperEEG"`，并兼容旧版未声明来源的清单。此清单 schema 1 与主程序本地插件注册表 schema 2 不同。
+PYML 检查插件清单 `schema_version=1`、`id="data-conversion"`、非空 `name/version` 和 `entrypoint`。入口 `kind` 为 `executable` 或 `python`，`path` 必须是目录内实际 `.exe` 或 `.py` 的相对路径。PYfNIRs 必须声明 `source_project="PYfNIRs"`，PYEDA 必须声明 `source_project="PYEDA"`，HyperEEG 使用 `source_project="HyperEEG"`，并兼容旧版未声明来源的清单。此清单 schema 1 与主程序本地插件注册表 schema 2 不同。
 
 主程序检测只检查清单与启动文件，不验证数据、MATLAB、科学参数或运行依赖。菜单只启动转换器，不自动传入实验设计、`experiment.json` 或转换参数。
 
@@ -33,6 +33,20 @@ PYML 0.4.6 检查插件清单 `schema_version=1`、`id="data-conversion"`、非�
 | 交接与验收 | 预期输出、行数/键/值/缺失检查、实际结果、失败项、未运行项、PYML 列映射和当前状态 |
 
 需要时交付 `hypereeg-options.json` 或 `pyfnirs-selection.json`，字段必须由目标版本真实接口确认。未知事实写 missing；预期输出路径与实际存在的输入文件分别标记。插件参数、`preprocessing.plan.json`、`experiment.json`、`statistics.plan.json` 各自遵循其接口，不能混传。
+
+## PYEDA：EDA 结果包转换
+
+PYEDA 插件读取已完成的结果包，不重新运行原始信号预处理。输入至少包含 `manifest.json`、`summary.json`、`intake/analysis_settings.json`、`intake/feature_definitions.csv` 和所选 `features/` 表。`participant_task_role` 保留 `subject_id`、`task`、`group_id`、`group_type`、`participant_label`、`window`、`role` 的重复测量结构，`participant_exposure` 不附带 outcome，`records` 默认只提交 `status=valid` 的窗口并记录其他状态的排除数。
+
+当前插件入口和命令由其清单和 `--help` 核对。发行版入口示例为：
+
+```text
+"<PYEDA插件目录>\\PYEDA-DataConversion.exe" --input "<PYEDA结果目录>" --output "<新输出目录>" --source participant_task_role --no-open
+```
+
+源码入口可使用插件依赖环境运行 `launch_eda.py`。输出必须包含 `dataset.csv`、`valid_mask.csv`、`feature_dictionary.json`、`provenance.json`、`conversion.plan.json`、`batch_summary.json`、`progress.json` 和 `progress.log`。`feature__*` 来自 `analysis_settings.json` 的特征清单，`target__*` 只来自显式 `outcomes`，`meta__*` 保留身份和质控信息。转换结束后按 `subject_id` 或研究设计中的真实独立单位进行 PYML 分组切分。
+
+公开特征转换与质控示例位于 PYML 源码的 `examples/pyeda/`。另见 [PYEDA 转换参考](pyeda-conversion.md)。
 
 ## HyperEEG：特征表转换
 
