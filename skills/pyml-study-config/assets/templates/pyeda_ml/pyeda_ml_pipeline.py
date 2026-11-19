@@ -390,7 +390,7 @@ def _read_text_csv(path: Path):
 
 
 def _read_hashed_intake(config: dict[str, Any], relative_path: str):
-    root = Path(config["input"])
+    root = Path(config["input"]).expanduser().resolve()
     relative = Path(relative_path)
     path = (root / relative).resolve()
     if relative.is_absolute() or not path.is_relative_to(root) or not path.is_file():

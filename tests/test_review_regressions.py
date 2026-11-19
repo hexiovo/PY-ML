@@ -91,7 +91,7 @@ class ExperimentRegressionTests(unittest.TestCase):
             backup = store.recover()
             self.assertEqual(backup.read_bytes(), b"damaged registry")
             store.save(PluginSettings(directory), PYEDA_SOURCE)
-            self.assertEqual(store.load(PYEDA_SOURCE).directory, directory)
+            self.assertEqual(store.load(PYEDA_SOURCE).directory, str(Path(directory).resolve()))
 
 
 class PyedaPipelineTests(unittest.TestCase):
@@ -151,13 +151,16 @@ class PyedaPipelineTests(unittest.TestCase):
         (self.run / "manifest.json").write_text(json.dumps({"artifacts": [{"path": source.name, "sha256": digest}]}), encoding="utf-8")
         table = pd.DataFrame({"meta__group_id": ["G1"], "meta__task": ["A"],
                               "meta__participant_label": ["001"], "meta__subject_id": ["NA"], "feature__x": [2.0]})
-        config = {"input": str(self.run), "conversion": {"verify_manifest_hashes": True},
+        root_alias = self.run / ".." / self.run.name
+        config = {"input": str(root_alias), "conversion": {"verify_manifest_hashes": True},
                   "machine_learning": {"ioc_classification": {"source": source.name, "target_column": "ioc",
                                       "join_keys": ["group_id", "task", "participant_label"]}}}
         rows, audit = pipeline._prepare_ioc(config, table, table, ["feature__x"])
         self.assertEqual(audit["unmatched_labeled_events"], 1)
         self.assertAlmostEqual(audit["match_rate"], 2 / 3)
         self.assertEqual(rows["sample_id"].nunique(), 2)
+        with self.assertRaisesRegex(pipeline.PipelineError, "超出 PYEDA 输入包"):
+            pipeline._read_hashed_intake(config, "../events.csv")
         source.write_text(source.read_text(encoding="utf-8").replace("e1,0", "e1,1"), encoding="utf-8")
         with self.assertRaisesRegex(pipeline.PipelineError, "清单哈希"):
             pipeline._prepare_ioc(config, table, table, ["feature__x"])

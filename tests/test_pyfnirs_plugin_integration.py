@@ -199,7 +199,7 @@ class PluginMenuIntegrationTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="plugin-menu-")
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.preferences_path = self.root / "preferences.json"
         self.window = WorkbenchWindow(
             preferences_path=self.preferences_path,

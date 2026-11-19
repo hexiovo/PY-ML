@@ -22,7 +22,7 @@ class SettingsGuiTests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="pyml-settings-")
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         data = self.root / "合成数据.csv"
         data.write_text("x,target\n1,2\n2,4\n3,6\n4,8\n5,10\n", encoding="utf-8")
         self.config = ExperimentConfig(
