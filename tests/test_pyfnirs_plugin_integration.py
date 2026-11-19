@@ -292,7 +292,6 @@ class PluginMenuIntegrationTest(unittest.TestCase):
             self.assertTrue(restarted.hypereeg_conversion_action.isEnabled())
             self.assertTrue(restarted.pyfnirs_conversion_action.isEnabled())
             (pyfnirs_dir / "DataConversion.exe").unlink()
-            restarted.refresh_pyfnirs_plugin()
             restarted.refresh_plugins()
             self.assertTrue(restarted.hypereeg_conversion_action.isEnabled())
             self.assertFalse(restarted.pyfnirs_conversion_action.isEnabled())
@@ -339,7 +338,6 @@ class PluginMenuIntegrationTest(unittest.TestCase):
         )
 
         self.window.refresh_plugins()
-        self.window.refresh_pyfnirs_plugin()
 
         self.assertTrue(self.window.hypereeg_conversion_action.isEnabled())
         self.assertFalse(self.window.pyfnirs_conversion_action.isEnabled())

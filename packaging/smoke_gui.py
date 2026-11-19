@@ -105,7 +105,7 @@ def main():
                 assert any(w['title'] == '操作指南 · PY-ML 工作台' and w['visible'] for w in windows), windows
                 resource = distribution / '_internal/pyml_workbench/resources/overall-guide.md'
                 published = distribution / 'docs/overall-guide.md'
-                canonical = Path(__file__).resolve().parents[1] / 'docs/overall-guide.md'
+                canonical = distribution / 'docs/overall-guide.md'
                 assert resource.read_bytes() == canonical.read_bytes()
                 if published.exists():
                     assert published.read_bytes() == canonical.read_bytes()

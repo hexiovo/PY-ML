@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse
 import hashlib
-import importlib.metadata as metadata
+from release_metadata import source_version
 import json
 import os
 import re
@@ -15,14 +15,17 @@ import zipfile
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--version', default=metadata.version('pyml-workbench'))
+    parser.add_argument('--version', default=source_version(root))
+    profiles = json.loads((root / 'packaging/profiles.json').read_text(encoding='utf-8'))
+    parser.add_argument('--profile', choices=sorted(profiles['profiles']), default=profiles['default_profile'])
     parser.add_argument('--archive', type=Path, help='verify a named profile ZIP without changing legacy defaults')
     parser.add_argument('--evidence', type=Path, help='write checks into a separate verification directory')
+    parser.add_argument('--check-current-guide', action='store_true', help='also compare the archive against this checkout')
     parser.add_argument('--install-check', action='store_true', help='also check user installation and the bundled dependency installer')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
         parser.error('version must use major.minor.patch digits')
-    archive = args.archive.resolve() if args.archive else root / f'dist/PYML-Workbench-{args.version}-windows-x64.zip'
+    archive = args.archive.resolve() if args.archive else root / f'dist/PYML-Workbench-{args.version}-windows-x64-{args.profile}.zip'
     evidence = args.evidence.resolve() if args.evidence else root / f'delivery/exe-{args.version}'
     (evidence / 'logs').mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as bundle:
@@ -52,6 +55,8 @@ def main():
             assert target.parent == Path(tempfile.gettempdir()).resolve() and target.name.startswith('PYML-便携分发-')
             bundle.extractall(target)
             distribution = target / folder_name
+            if args.check_current_guide:
+                assert (distribution / 'docs/overall-guide.md').read_bytes() == (root / 'docs/overall-guide.md').read_bytes()
             completed = subprocess.run([sys.executable, '-X', 'utf8', '-B', str(root / 'packaging/smoke_gui.py'),
                 str(distribution), str(evidence / 'relocated-gui'), '--startup-only'] + (['--guide'] if guide_present else []),
                 cwd=target, capture_output=True, text=True, encoding='utf-8', timeout=90)

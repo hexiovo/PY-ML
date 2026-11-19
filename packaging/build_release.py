@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from importlib import metadata
+from release_metadata import require_build_version, source_version
 import json
 import os
 from pathlib import Path
@@ -43,7 +43,8 @@ def main() -> int:
         raise SystemExit('--archive-path must stay under the project dist directory.')
     if not dist_dir.resolve().is_relative_to((root / 'dist').resolve()):
         raise SystemExit('--release-dir must stay under the project dist directory.')
-    archive_prefix = root / f'dist/PYML-Workbench-{{version}}-windows-x64-{profile_name}.zip'
+    version = source_version(root)
+    archive_prefix = root / f'dist/PYML-Workbench-{version}-windows-x64-{profile_name}.zip'
     if args.work_dir is None:
         work_dir = root / 'build' / f'pyinstaller-{profile_name}'
     else:
@@ -79,8 +80,8 @@ def main() -> int:
         raise SystemExit('Build with the isolated Python 3.12.14 runtime.')
     if dist_dir.exists():
         raise SystemExit(f'Release folder already exists; preserve it and choose a clean output: {dist_dir}')
-    version = metadata.version('pyml-workbench')
-    archive = archive_override or root / f'dist/PYML-Workbench-{version}-windows-x64-{profile_name}.zip'
+    require_build_version(root)
+    archive = archive_override or archive_prefix
     if archive.exists():
         raise SystemExit(f'Release archive already exists; preserve it and choose a clean output: {archive}')
     if work_dir.exists():

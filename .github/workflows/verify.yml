@@ -1,0 +1,46 @@
+name: Verify PYML
+
+on: [push, pull_request, merge_group, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
+        with:
+          version: '0.13.5'
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --locked --no-editable --no-dev --all-extras
+      - run: uv pip install hatchling -r skills/pyml-study-config/assets/templates/pyeda_ml/requirements.txt pymupdf==2.0
+      - run: .venv/Scripts/python.exe -m unittest discover -s tests -v
+      - run: .venv/Scripts/python.exe skills/pyml-study-config/scripts/check_template_privacy.py skills/pyml-study-config/assets/templates
+      - run: .venv/Scripts/python.exe -m hatchling build -d dist
+      - run: .venv/Scripts/python.exe packaging/verify_python_release.py
+      - run: .venv/Scripts/python.exe packaging/build_skill.py
+
+
+  all-checks-passed:
+    if: always()
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the Windows verification
+        env:
+          RESULT: ${{ needs.windows.result }}
+        run: test "$RESULT" = success

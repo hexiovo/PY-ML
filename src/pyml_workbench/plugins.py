@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 from typing import Mapping
@@ -182,6 +183,28 @@ class PluginSettingsStore:
 
     def remove(self, source_project: str) -> None:
         self.update_sources({self._source_key(source_project): None})
+
+    def recover(self) -> Path | None:
+        """Reset an unreadable registry after preserving its original bytes."""
+        try:
+            self.load_all()
+        except PluginError:
+            pass
+        else:
+            raise PluginError("插件设置可正常读取，无需恢复。")
+        backup = None
+        try:
+            if self.path.exists():
+                with self.path.open("rb") as original, tempfile.NamedTemporaryFile(
+                    dir=self.path.parent, prefix=f"{self.path.name}.", suffix=".bak", delete=False
+                ) as stream:
+                    shutil.copyfileobj(original, stream)
+                    backup = Path(stream.name)
+            # Legacy files are preserved in place. A new registry supersedes them.
+            self._write_registry({})
+        except OSError as exc:
+            raise PluginError(f"无法备份或恢复插件设置：{exc}") from exc
+        return backup
 
     def update_sources(
         self,

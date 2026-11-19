@@ -330,3 +330,13 @@ def select_features_target(
     if task == "classification" and target.nunique(dropna=False) < 2:
         raise DatasetError("Classification requires at least two target classes")
     return features, target
+
+
+def write_literal_xlsx(frame: pd.DataFrame, path: str | Path, *, sheet_name: str = "Sheet1") -> None:
+    """Export table strings verbatim, including labels beginning with an equals sign."""
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        frame.to_excel(writer, sheet_name=sheet_name, index=False)
+        for row in writer.sheets[sheet_name].iter_rows():
+            for cell in row:
+                if cell.data_type in {"f", "e"} and isinstance(cell.value, str):
+                    cell.data_type = "s"

@@ -20,7 +20,8 @@
   ],
   "raw_EEG_or_native_identity_included": false,
   "source_report_numbers_preserved": true,
-  "new_native_conversion": "NOT RUN",
-  "new_model_fit": "NOT RUN",
-  "final_test_calls": 0
+  "new_native_conversion": "Template contains no native EEG or EDA identity data",
+  "new_model_fit": "Validation of current behavior uses independent synthetic data",
+  "final_test_calls": 0,
+  "pyeda_template_policy": "Configured research metadata and execution receipts; default validation with no test access"
 }

@@ -12,8 +12,9 @@ def ordered_positions(values, row_count):
     series = pd.Series(values)
     if series.isna().any():
         raise ValueError("Time ordering column contains missing values")
-    if pd.api.types.is_numeric_dtype(series.dtype):
-        converted = pd.to_numeric(series, errors="raise").to_numpy(dtype=float)
+    numeric = series if pd.api.types.is_numeric_dtype(series.dtype) else pd.to_numeric(series, errors="coerce")
+    if not numeric.isna().any() and not pd.api.types.is_datetime64_any_dtype(series.dtype):
+        converted = numeric.to_numpy()
         if not np.isfinite(converted).all():
             raise ValueError("Time ordering must contain finite values")
     else:
@@ -83,7 +84,12 @@ def cross_validate_snapshot(config, snapshot, *, before_fit=None):
         actual_train = snapshot.target.iloc[train].to_numpy()
         if before_fit:
             before_fit(index)
-        estimator.fit(ready_train, actual_train)
+        inner_cv = {}
+        if scheme == "group" and getattr(estimator, "kind", None) == "stacking":
+            estimator.fit(ready_train, actual_train, groups=groups.iloc[train_local].to_numpy())
+            inner_cv = {"inner_cv": {"strategy": "GroupKFold", "folds": estimator.inner_cv_audit_}}
+        else:
+            estimator.fit(ready_train, actual_train)
         if config.model_id.startswith("T"):
             prediction = estimator.forecast(len(validation), offset=settings.gap)
         else:
@@ -98,7 +104,7 @@ def cross_validate_snapshot(config, snapshot, *, before_fit=None):
                 training_series=np.asarray(actual_train, dtype=float) if scheme == "time" else None,
                 seasonal_period=getattr(estimator, "mase_period_", 1),
                 horizons=np.arange(settings.gap + 1, settings.gap + len(validation) + 1) if config.model_id.startswith("T") else None)
-        reports.append({"fold": index, "train_positions": train.tolist(), "validation_positions": validation.tolist(), "metrics": metrics, "reduction": reduction_metadata})
+        reports.append({"fold": index, "train_positions": train.tolist(), "validation_positions": validation.tolist(), "metrics": metrics, "reduction": reduction_metadata, **inner_cv})
     from .metrics import METRICS
     means, deviations = {}, {}
     for metric in METRICS[config.task]:

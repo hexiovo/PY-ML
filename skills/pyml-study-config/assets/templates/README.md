@@ -11,6 +11,7 @@
 - `apa_report/figures/`：示例中14幅图的PNG/PDF；`figure_data/`是重绘所需的匿名汇总和固定示例输出，不含源矩阵、主体映射、原始特征名称或本机指针。
 - `apa_report/plot_model_comparison.py`：由保存的汇总重绘全部示例图，不拟合模型。分类逐模型accuracy/AUC、回归误差、预测—目标、特征排序、PCA和覆盖图均有独立输出。
 - `hypereeg_converter/`：完整转换调度、固定进度UI、内存准入调用、流式累积和原生表桥接代码；`settings.example.json`的机器字段为空。
+- `pyeda_ml/`：PYEDA 结果包转换与 PYML 分组机器学习的一站式 CLI/GUI，目标列、模型和分组列均由用户配置。
 - `validation-summary.json`：模板级实际验证范围；不把模板启动检查称为新的原生数据转换成功。
 
 ## 环境与启动
@@ -35,10 +36,11 @@ MATLAB每个Artifact只加载一次，多表复用；先做内存准入，不绕
 python apa_report/build_apa_template.py --output <报告输出目录>
 python apa_report/plot_model_comparison.py --output <重绘输出目录>
 python launch.py convert --config <用户侧配置文件> --validate-only
+python pyeda_ml/pyeda_ml_pipeline.py --config <PYEDA-ML配置文件> --validate-only
 ```
 
 最后一条只核验配置契约，不加载MAT、不转换、不训练。私有路径可以出现在用户侧来源台账和执行日志中，但不得回写本目录或提交Git。
 
 ## 来源与验证
 
-转换实现来自已验证的一站式转换程序，模板改动限于配置、相对入口和可迁移启动。`export_loaded_table.m`由公开转换插件桥接实现调整为接受已载入Artifact，保留标量校验和17位数值序列化；插件来源见SKILL的`references/plugins.md`。本轮未重跑真实原生MAT，也未重跑机器学习或最终test。匿名示例保留原有拟合指标，另行执行路径/元数据扫描、图表重绘和文档渲染检查。
+HyperEEG 模板转换实现来自已验证的一站式转换程序，模板改动限于配置、相对入口和可迁移启动。`export_loaded_table.m`由公开转换插件桥接实现调整为接受已载入Artifact，保留标量校验和17位数值序列化，插件来源见SKILL的`references/plugins.md`。本轮未重跑真实原生MAT、EEG机器学习或EEG最终test。PYEDA 一站式入口使用真实 PYEDA 结果包完成了本地转换、主体分组回归、配置冻结和一次最终test，结果仅代表该示例的探索性运行。匿名示例保留原有拟合指标，另行执行路径/元数据扫描、图表重绘和文档渲染检查。

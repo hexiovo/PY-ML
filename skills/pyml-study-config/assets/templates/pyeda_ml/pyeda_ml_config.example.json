@@ -1,0 +1,63 @@
+{
+  "python": "",
+  "pyml_root": "",
+  "pyeda_plugin": "<PYEDA plugin directory>",
+  "input": "<PYEDA result directory>",
+  "output_root": "<new output root>",
+  "target_column": "target__novelty_mean",
+  "task": "regression",
+  "model_id": "R01",
+  "group_column": "meta__subject_id",
+  "conversion": {
+    "source": "participant_task_role",
+    "include_outcomes": true,
+    "only_valid_records": true,
+    "verify_manifest_hashes": true
+  },
+  "machine_learning": {
+    "evaluation_mode": "validation",
+    "seed": 42,
+    "parameters": {},
+    "parameters_by_model": {
+      "C23": {"reg_param": 0.1}
+    },
+    "eda_sequence": {
+      "window": 5,
+      "horizon": 1
+    },
+    "feature_columns": null,
+    "outcomes": [
+      "target__novelty_mean",
+      "target__usefulness_mean",
+      "target__fluency_ind",
+      "target__flexibility_ind",
+      "target__ioc_binary"
+    ],
+    "methods": {
+      "regression": "all_regression",
+      "classification": "all_classification"
+    },
+    "iterations": 3,
+    "all_missing_feature_policy": "constant_zero_with_indicator",
+    "time_column": null,
+    "outcome_tasks": {
+      "target__novelty_mean": "regression",
+      "target__usefulness_mean": "regression",
+      "target__fluency_ind": "regression",
+      "target__flexibility_ind": "regression",
+      "target__ioc_binary": "classification"
+    },
+    "outcome_group_columns": {
+      "target__ioc_binary": "meta__group_id"
+    },
+    "ioc_classification": {
+      "source": "intake/response_events.csv",
+      "target_column": "ioc",
+      "join_keys": [
+        "group_id",
+        "task",
+        "participant_label"
+      ]
+    }
+  }
+}

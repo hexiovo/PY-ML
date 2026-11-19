@@ -39,7 +39,7 @@ _SOURCES = (
 
 
 class PluginSettingsDialog(QDialog):
-    """Edit both conversion sources together while retaining their separate keys."""
+    """Edit conversion sources together while retaining their separate keys."""
 
     settings_saved = Signal()
 
@@ -65,6 +65,10 @@ class PluginSettingsDialog(QDialog):
         self.store_error_label.setWordWrap(True)
         self.store_error_label.setStyleSheet("color: #B45309;")
         layout.addWidget(self.store_error_label)
+        self.recover_button = QPushButton("备份并恢复插件设置", self)
+        self.recover_button.hide()
+        self.recover_button.clicked.connect(self.recover_settings)
+        layout.addWidget(self.recover_button)
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -91,11 +95,23 @@ class PluginSettingsDialog(QDialog):
         except PluginError as exc:
             registry = {}
             self.store_error_label.setText(f"无法读取现有插件设置：{exc}")
+            self.recover_button.show()
         for source, _detector in _SOURCES:
             settings = registry.get(source, PluginSettings())
             self.directory_edits[source].setText(settings.directory or "")
             self.python_edits[source].setText(settings.python_executable or "")
             self.check_source(source)
+
+    def recover_settings(self) -> None:
+        try:
+            backup = self.store.recover()
+        except PluginError as exc:
+            QMessageBox.warning(self, "无法恢复插件设置", str(exc))
+            return
+        message = f"原设置已备份到：{backup}" if backup else "旧版配置文件已保留。"
+        self.store_error_label.setText(f"插件设置已恢复。{message} 请重新选择并保存插件目录。")
+        self.recover_button.hide()
+        self.settings_saved.emit()
 
     def _build_source_group(self, source: str) -> QGroupBox:
         group = QGroupBox(source, self)

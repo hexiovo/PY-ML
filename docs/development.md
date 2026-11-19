@@ -54,3 +54,18 @@ Windows 用户也可使用仓库根目录的 `run_pyml_workbench.bat`。桌面�
 新增模型或配置字段时，应先更新真实运行时契约，再更新[Python API 指南](api-guide.md)、[模型索引](model-index.md)、[批量搜索指南](batch-guide.md)和[PYML 实验配置技能](../skills/pyml-study-config/SKILL.md)。用目标 checkout 的公开 API、数据划分和工件回执核对文档；模型目录数量、参数构造或文档示例不能替代真实拟合验证。
 
 Windows Release 的依赖收集、安装脚本、启动脚本和归档由 `packaging/` 下的发布工具维护。发行版包含完整运行目录、离线 Markdown 操作指南和技能文件；详细下载与安装步骤见[Windows 指南](exe-guide.md)。
+
+
+## 发布验证
+
+先在目标 Python 环境执行本页单元测试命令，再运行以下检查。Wheel 和源码包的版本由当前 `pyproject.toml` 决定。为避免混用旧环境构建 EXE，先将当前版本 wheel 安装到专用构建环境。
+
+```powershell
+python -m hatchling build -d dist
+python packaging/verify_python_release.py
+python packaging/build_skill.py
+python packaging/build_release.py --profile full
+python packaging/verify_zip.py --profile full --check-current-guide --install-check
+```
+
+模板隐私检查使用 `skills/pyml-study-config/scripts/check_template_privacy.py`。GitHub Actions 执行 Windows 回归、隐私扫描、Python 工件和技能包构建。

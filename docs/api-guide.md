@@ -67,7 +67,7 @@ print(result.audit["test_evaluation_count"])
 - `prepare_experiment(config, *, on_event=None) -> ExperimentSession` 验证配置、建立共同划分、只在训练分区拟合预处理和 estimator，并计算训练/验证结果。它不计算测试指标，也不让测试结果参与选择。
 - `freeze_experiment(session, expected_config=None) -> ExperimentSession` 校验训练配置快照和 SHA-256；如果传入 `expected_config`，也必须与拟合配置相同。它记录对当前模型/参数快照的显式批准。
 - `evaluate_test(session, *, on_event=None, export_artifacts=True) -> ExperimentResult` 只接受已冻结会话。测试评估至多执行一次；成功结果会缓存并在重复 API 读取时返回同一结果，不会重测。失败或中断会把会话标记为不可重试；不要以新会话重测同一最终测试集。新的最终评估应依据研究计划使用新的独立数据。
-- 如配置了 `output_dir`，默认在最终评估时写出配置、指标、逐行结果、模型和 manifest。`export_artifacts=False` 可在调用中关闭文件写入。
+- 如配置了 `output_dir`，先检查目录，再评估并缓存结果，随后以完整目录发布配置、指标、逐行结果、模型和 manifest。修复输出路径或写入条件后，可再次调用 `evaluate_test` 导出缓存结果，无需重新评估。`export_artifacts=False` 可在调用中关闭文件写入。
 
 `split.strategy="kfold"` 使用独立的 OOF 评估流程。`prepare_experiment` 返回各折结果与 OOF 指标，但会话没有最终拟合模型，直接调用 `freeze_experiment` 会报错。检查 OOF 结果并确定配置后，可调用专用重拟合函数，再进行唯一一次最终测试：
 

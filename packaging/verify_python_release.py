@@ -1,7 +1,7 @@
 """Verify current source and study skill in the Python release artifacts."""
 import argparse
 import hashlib
-import importlib.metadata as metadata
+from release_metadata import source_version
 import json
 from pathlib import Path
 import tarfile
@@ -11,11 +11,13 @@ import zipfile
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--evidence',type=Path)
+    parser.add_argument('--dist',type=Path)
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[1]
-    version=metadata.version('pyml-workbench')
-    wheel=root/f'dist/pyml_workbench-{version}-py3-none-any.whl'
-    sdist=root/f'dist/pyml_workbench-{version}.tar.gz'
+    version=source_version(root)
+    dist = args.dist or root / 'dist'
+    wheel = dist / f'pyml_workbench-{version}-py3-none-any.whl'
+    sdist = dist / f'pyml_workbench-{version}.tar.gz'
     checked=[]
     with zipfile.ZipFile(wheel) as bundle:
         assert bundle.read('pyml_workbench/resources/overall-guide.md')==(root/'docs/overall-guide.md').read_bytes()
@@ -27,6 +29,7 @@ def main():
         assert not any(name.startswith(('tests/','delivery/','output/','build/')) for name in bundle.namelist())
     with tarfile.open(sdist) as bundle:
         names=bundle.getnames()
+        assert any('/tests/test_' in name for name in names), 'sdist is missing the regression suite'
         assert not any(any('/'+part+'/' in name for part in ['delivery','output','build','.venv','__pycache__']) for name in names)
         assert not any(name.endswith(('/packaging/plan.txt', '/packaging/guide-plan.txt')) for name in names)
         for source in [root/'pyproject.toml',root/'README.md',root/'version.md',root/'docs/overall-guide.md',*(p for p in (root/'skills/pyml-study-config').rglob('*') if p.is_file() and '__pycache__' not in p.parts)]:

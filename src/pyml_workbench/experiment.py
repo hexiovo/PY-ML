@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import tempfile
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -32,7 +33,7 @@ from sklearn.svm import NuSVC, SVC
 from .adapters import UnsupportedOperationError
 from .catalog import build_estimator, get_model, list_models, model_capabilities
 from .config import ConfigError, ExperimentConfig
-from .data import DatasetError, LoadedDataset, load_dataset, select_features_target
+from .data import DatasetError, LoadedDataset, load_dataset, select_features_target, write_literal_xlsx
 from .preprocessing import build_preprocessor, fit_transform_preprocessor
 from .sequence import SequenceConfig, build_sequence_plan
 
@@ -91,6 +92,11 @@ def _json_digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
 
+def _source_digest(path: str | Path) -> str:
+    with Path(path).expanduser().open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def _table_digest(frame: pd.DataFrame | pd.Series | None) -> str | None:
     if frame is None:
         return None
@@ -134,9 +140,9 @@ def build_snapshot(config: ExperimentConfig | dict[str, Any], *, objective_label
     config = ExperimentConfig.from_dict(config) if isinstance(config, dict) else config
     config.validate()
     objective_labels_column = objective_labels_column or config.dataset.reference_labels_column
-    before_sha = hashlib.sha256(Path(config.dataset.source_path).read_bytes()).hexdigest()
+    before_sha = _source_digest(config.dataset.source_path)
     dataset = load_dataset(config.dataset)
-    source_sha = hashlib.sha256(Path(dataset.source_path).read_bytes()).hexdigest()
+    source_sha = _source_digest(dataset.source_path)
     if source_sha != before_sha:
         raise DatasetError("Source changed while loading; retry with a stable dataset")
     return _build_snapshot_from_frame(
@@ -264,9 +270,9 @@ def build_extended_snapshot(
     """Load an extended-model source once and return its snapshot and optional plan."""
     config = ExperimentConfig.from_dict(config) if isinstance(config, dict) else config
     config.validate()
-    before_sha = hashlib.sha256(Path(config.dataset.source_path).read_bytes()).hexdigest()
+    before_sha = _source_digest(config.dataset.source_path)
     dataset = load_dataset(config.dataset)
-    source_sha = hashlib.sha256(Path(dataset.source_path).read_bytes()).hexdigest()
+    source_sha = _source_digest(dataset.source_path)
     if source_sha != before_sha:
         raise DatasetError("Source changed while loading; retry with a stable dataset")
     sequence_ids = {"H01", "H02", "H03", "N04", "N06", "N07", "N08", "N09"}
@@ -787,6 +793,16 @@ def _session_training_curves(session: ExperimentSession) -> dict[str, Any] | Non
         raise ExperimentError("Training curves must contain only finite JSON values") from exc
 
 
+def _artifact_destination(output_dir: str | Path, source_path: str) -> Path:
+    target = Path(output_dir).expanduser().resolve()
+    source = Path(source_path).expanduser().resolve()
+    if target == source or target == source.parent:
+        raise ArtifactError("output_dir must be a separate directory; the input file and its parent are protected")
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        raise ArtifactError(f"output_dir already exists and is not empty: {target}")
+    return target
+
+
 def _write_artifacts(
     output_dir: str | Path,
     source_path: str,
@@ -797,13 +813,8 @@ def _write_artifacts(
     model: FittedModel,
     training_curves: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    target = Path(output_dir).expanduser().resolve()
-    source = Path(source_path).expanduser().resolve()
-    if target == source or target == source.parent:
-        raise ArtifactError("output_dir must be a separate directory; the input file and its parent are protected")
-    if target.exists() and (not target.is_dir() or any(target.iterdir())):
-        raise ArtifactError(f"output_dir already exists and is not empty: {target}")
-    target.mkdir(parents=True, exist_ok=True)
+    target = _artifact_destination(output_dir, source_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
     metrics_frame = pd.DataFrame([
         {"split": split, "metric": name, "value": value}
         for split, values in metrics.items()
@@ -811,28 +822,33 @@ def _write_artifacts(
         for name, value in values.items()
         if isinstance(value, (str, int, float, bool)) or value is None
     ])
-    config_payload = {"experiment": frozen_config, "frozen_config_sha256": frozen_sha}
-    (target / "config.json").write_text(json.dumps(config_payload, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    (target / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    if training_curves is not None:
-        (target / "training_curves.json").write_text(
-            json.dumps(training_curves, ensure_ascii=False, indent=2, allow_nan=False),
-            encoding="utf-8",
-        )
-    (target / "model_manifest.json").write_text(json.dumps(model.manifest(), ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    model_path = target / "model.joblib"
-    if model.model_id in _EXTENDED_MODEL_IDS:
-        from .extended_experiment import export_extended_model
+    with tempfile.TemporaryDirectory(prefix=".pyml-export-", dir=target.parent) as work:
+        staged = Path(work) / "artifacts"
+        staged.mkdir()
+        config_payload = {"experiment": frozen_config, "frozen_config_sha256": frozen_sha}
+        (staged / "config.json").write_text(json.dumps(config_payload, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+        (staged / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+        if training_curves is not None:
+            (staged / "training_curves.json").write_text(
+                json.dumps(training_curves, ensure_ascii=False, indent=2, allow_nan=False),
+                encoding="utf-8",
+            )
+        (staged / "model_manifest.json").write_text(json.dumps(model.manifest(), ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+        model_path = staged / "model.joblib"
+        if model.model_id in _EXTENDED_MODEL_IDS:
+            from .extended_experiment import export_extended_model
 
-        export_extended_model(model, model_path)
-    else:
-        joblib.dump(model, model_path, compress=3)
-    metrics_frame.to_csv(target / "metrics.csv", index=False, encoding="utf-8-sig")
-    results.to_csv(target / "results.csv", index=False, encoding="utf-8-sig")
-    with pd.ExcelWriter(target / "results.xlsx", engine="openpyxl") as writer:
-        results.to_excel(writer, sheet_name="results", index=False)
-    with pd.ExcelWriter(target / "metrics.xlsx", engine="openpyxl") as writer:
-        metrics_frame.to_excel(writer, sheet_name="metrics", index=False)
+            export_extended_model(model, model_path)
+        else:
+            joblib.dump(model, model_path, compress=3)
+        metrics_frame.to_csv(staged / "metrics.csv", index=False, encoding="utf-8-sig")
+        results.to_csv(staged / "results.csv", index=False, encoding="utf-8-sig")
+        write_literal_xlsx(results, staged / "results.xlsx", sheet_name="results")
+        write_literal_xlsx(metrics_frame, staged / "metrics.xlsx", sheet_name="metrics")
+        # Windows requires an absent destination for an atomic directory rename.
+        if target.exists():
+            target.rmdir()  # Refuses to remove a populated directory, including concurrent exports.
+        staged.rename(target)
     paths = {
         "output_dir": str(target),
         "config": str(target / "config.json"),
@@ -1311,11 +1327,20 @@ def evaluate_test(
     if not isinstance(session, ExperimentSession) or not session.frozen:
         raise ExperimentError("Freeze the fitted session before evaluating test")
     freeze_experiment(session)  # Validate, without changing a frozen/tested state.
-    if session.result is not None:
-        return session.result
-    if session.finalized:
-        raise ExperimentError("Test evaluation previously failed or was interrupted; this session cannot be retested")
-    return _evaluate_test_once(session, on_event=on_event, export_artifacts=export_artifacts)
+    if session.result is None:
+        if session.finalized:
+            raise ExperimentError("Test evaluation previously failed or was interrupted; this session cannot be retested")
+        if export_artifacts and session.config.output_dir:
+            _artifact_destination(session.config.output_dir, session.source_path)
+        _evaluate_test_once(session, on_event=on_event)
+    result = session.result
+    if export_artifacts and session.config.output_dir and not result.artifact_paths:
+        result.artifact_paths = _write_artifacts(
+            session.config.output_dir, session.source_path, session.frozen_config,
+            session.frozen_config_sha256, result.metrics, result.results, result.model,
+            training_curves=_session_training_curves(session),
+        )
+    return result
 
 
 def finalize_experiment(
@@ -1341,7 +1366,6 @@ def _evaluate_test_once(
     session: ExperimentSession,
     *,
     on_event: Callable[[str], None] | None = None,
-    export_artifacts: bool = True,
 ) -> ExperimentResult:
     """Evaluate the already-fitted validation session on test exactly once."""
     if not isinstance(session, ExperimentSession):
@@ -1473,25 +1497,13 @@ def _evaluate_test_once(
     sequence_plan = getattr(session, "sequence_plan", None)
     if sequence_plan is not None:
         audit["sequence_plan_manifest"] = sequence_plan.to_dict()
-    artifact_paths: dict[str, str] = {}
-    if export_artifacts and config.output_dir:
-        artifact_paths = _write_artifacts(
-            config.output_dir,
-            session.source_path,
-            session.frozen_config,
-            session.frozen_config_sha256,
-            metrics,
-            result_frame,
-            fitted,
-            training_curves=_session_training_curves(session),
-        )
     result = ExperimentResult(
         config=session.frozen_config,
         metrics=metrics,
         audit=audit,
         results=result_frame,
         model=fitted,
-        artifact_paths=artifact_paths,
+        artifact_paths={},
     )
     session.result = result
     return result

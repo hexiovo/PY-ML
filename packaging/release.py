@@ -10,6 +10,9 @@ import shutil
 import sys
 import zipfile
 
+from release_metadata import require_build_version
+from build_skill import build_skill
+
 
 def digest(path):
     with path.open('rb') as stream:
@@ -38,7 +41,10 @@ def main():
     if archive_override is not None and not archive_override.is_relative_to(dist_root):
         raise SystemExit('--archive-path must stay under the project dist directory')
     assert (folder / 'PYML-Workbench.exe').is_file() and (folder / 'PYML-Worker.exe').is_file()
-    version = metadata.version('pyml-workbench')
+    version = require_build_version(root)
+    archive = archive_override or root / f'dist/PYML-Workbench-{version}-windows-x64-{profile_name}.zip'
+    if archive.exists():
+        raise SystemExit(f"Release archive already exists: {archive}")
     # Guides are external frozen data, so refresh from the same canonical file
     # as public docs before calculating checksums and creating the archive.
     guide_resource = folder / '_internal/pyml_workbench/resources/overall-guide.md'
@@ -53,9 +59,8 @@ def main():
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     shutil.copytree(root / 'examples/pyeda', folder / 'examples/pyeda', dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-    portable_skill = root / 'dist/pyml-study-config-portable.md'
-    if portable_skill.is_file():
-        shutil.copy2(portable_skill, folder / 'skills/pyml-study-config-portable.md')
+    skill_zip, portable_skill = build_skill(root, archive.parent)
+    shutil.copy2(portable_skill, folder / 'skills/pyml-study-config-portable.md')
     for template in (root / 'packaging/portable').iterdir():
         if template.is_file():
             (folder / template.name).write_text(template.read_text(encoding='utf-8'),
@@ -117,15 +122,13 @@ def main():
                    and not (p.parent == folder and p.name in runtime_files))
     manifest = ''.join(f'{digest(p)}  {p.relative_to(folder).as_posix()}\n' for p in files)
     (folder / 'SHA256SUMS.txt').write_text(manifest, encoding='utf-8')
-    archive = archive_override or root / f'dist/PYML-Workbench-{version}-windows-x64-{profile_name}.zip'
-    if archive.exists():
-        raise SystemExit(f'Release archive already exists; preserve it and choose a clean output: {archive}')
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as output:
         for path in sorted([*files, folder / 'SHA256SUMS.txt']):
             output.write(path, path.relative_to(folder.parent).as_posix())
-    checksum = root / 'dist/SHA256SUMS.txt'
-    entries = [folder / 'PYML-Workbench.exe', folder / 'PYML-Worker.exe', archive]
-    checksum.write_text(''.join(f'{digest(p)}  {p.relative_to(root / "dist").as_posix()}\n' for p in entries), encoding='utf-8')
+    checksum = archive.parent / 'SHA256SUMS.txt'
+    entries = [folder / 'PYML-Workbench.exe', folder / 'PYML-Worker.exe', archive, skill_zip, portable_skill]
+    downloads = [archive, skill_zip, portable_skill, *sorted(archive.parent.glob(f'pyml_workbench-{version}*'))]
+    checksum.write_text(''.join(f'{digest(p)}  {p.name}\n' for p in downloads), encoding='utf-8')
     report = {'version': version, 'folder_bytes': sum(p.stat().st_size for p in folder.rglob('*') if p.is_file()),
         'file_count': len(files) + 1, 'zip': str(archive), 'zip_bytes': archive.stat().st_size,
         'sha256': {p.relative_to(root).as_posix(): digest(p) for p in entries}}

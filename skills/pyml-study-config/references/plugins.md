@@ -18,7 +18,7 @@
 
 ## 接入契约与交付文件
 
-PYML 检查插件清单 `schema_version=1`、`id="data-conversion"`、非空 `name/version` 和 `entrypoint`。入口 `kind` 为 `executable` 或 `python`，`path` 必须是目录内实际 `.exe` 或 `.py` 的相对路径。PYfNIRs 必须声明 `source_project="PYfNIRs"`，PYEDA 必须声明 `source_project="PYEDA"`，HyperEEG 使用 `source_project="HyperEEG"`，并兼容旧版未声明来源的清单。此清单 schema 1 与主程序本地插件注册表 schema 2 不同。
+PYML 0.4.6 检查插件清单 `schema_version=1`、`id="data-conversion"`、非空 `name/version` 和 `entrypoint`。入口 `kind` 为 `executable` 或 `python`，`path` 必须是目录内实际 `.exe` 或 `.py` 的相对路径。PYfNIRs 必须声明 `source_project="PYfNIRs"`，PYEDA 必须声明 `source_project="PYEDA"`，HyperEEG 使用 `source_project="HyperEEG"`，并兼容旧版未声明来源的清单。此清单 schema 1 与主程序本地插件注册表 schema 2 不同。
 
 主程序检测只检查清单与启动文件，不验证数据、MATLAB、科学参数或运行依赖。菜单只启动转换器，不自动传入实验设计、`experiment.json` 或转换参数。
 
@@ -46,7 +46,7 @@ PYEDA 插件读取已完成的结果包，不重新运行原始信号预处理�
 
 源码入口可使用插件依赖环境运行 `launch_eda.py`。输出必须包含 `dataset.csv`、`valid_mask.csv`、`feature_dictionary.json`、`provenance.json`、`conversion.plan.json`、`batch_summary.json`、`progress.json` 和 `progress.log`。`feature__*` 来自 `analysis_settings.json` 的特征清单，`target__*` 只来自显式 `outcomes`，`meta__*` 保留身份和质控信息。转换结束后按 `subject_id` 或研究设计中的真实独立单位进行 PYML 分组切分。
 
-公开特征转换与质控示例位于 PYML 源码的 `examples/pyeda/`。另见 [PYEDA 转换参考](pyeda-conversion.md)。
+PYEDA 一站式入口位于 `assets/templates/pyeda_ml/pyeda_ml_pipeline.py`。它在转换后生成机器学习数据准备清单，记录缺失目标行和全列缺失特征，然后使用 `prepare_experiment`、`freeze_experiment` 和 `evaluate_test` 完成一次主体分组的回归或分类流程。目标、模型、分组列和随机种子来自用户配置，不能从转换结果自动猜测。
 
 ## HyperEEG：特征表转换
 

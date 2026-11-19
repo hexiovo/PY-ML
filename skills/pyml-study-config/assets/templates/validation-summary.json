@@ -70,13 +70,33 @@
     "ordinary_path": "PASS",
     "OOF_rows_once_and_disjoint_groups": "PASS"
   },
+  "pyeda_oneclick": {
+    "status": "PASS_synthetic",
+    "validation": {
+      "regression_slots": 2,
+      "classification_slots": 2,
+      "test_evaluation_count": 0,
+      "integrity_files": 68
+    },
+    "separate_final": {
+      "regression_slots": 1,
+      "test_evaluation_count": 1,
+      "integrity_files": 58
+    },
+    "report_formats": [
+      "DOCX",
+      "PDF",
+      "Markdown"
+    ],
+    "research_data": "NOT RUN"
+  },
   "private_paths_in_template": false,
   "new_real_EEG_conversion": "NOT RUN",
   "new_real_EEG_model_fit": "NOT RUN",
   "scientific_final_test_calls": 0,
   "privacy": {
     "status": "PASS",
-    "files_scanned": 87,
+    "files_scanned": 78,
     "docx_scanned": 2,
     "pdf_scanned": 16,
     "issues": []
